@@ -1,0 +1,16 @@
+{
+  "name": "fingertip-ink-garden",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "assets": "node scripts/prepare-assets.mjs",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": { "@mediapipe/tasks-vision": "1.2.2" },
+  "devDependencies": { "typescript": "7.0.2", "vite": "8.3.6", "tsx": "^4.20.6", "@types/node": "^25.0.0" }
+}
