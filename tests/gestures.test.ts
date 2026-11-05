@@ -226,12 +226,207 @@ test('an abrupt positional jump followed by a pause is not a 180ms swipe', () =>
   assert.equal(flower(tracker, 'Left', 520), 'peony');
 });
 
-test('a stroke shorter than 180ms cannot borrow time from the stable pauses', () => {
+test('a 120ms swipe with three coherent movement samples switches once', () => {
   const tracker = new HandGestureTracker();
   stabilize(tracker);
   swipe(tracker, .28, .6, 240, { duration: 120 });
   for (let t = 400; t <= 600; t += 40) tracker.update([observation(.6)], t);
+  assert.equal(flower(tracker, 'Left', 600), 'lotus');
+});
+
+test('both hands can swipe in the same direction independently', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker, [.18, .62], 0, ['Left', 'Right']);
+  for (let i = 1; i <= 7; i++) {
+    const inputs = [observation(.18 + .18 * i / 7, 'Left'), observation(.62 + .18 * i / 7, 'Right')];
+    tracker.update(i % 2 ? inputs.reverse() : inputs, 240 + i * 40);
+  }
+  assert.equal(flower(tracker, 'Left', 520), 'lotus');
+  assert.equal(flower(tracker, 'Right', 520), 'lotus');
+});
+
+test('nearby non-overlapping palms can swipe together without being treated as crossed', () => {
+  const tracker = new HandGestureTracker();
+  const samples = (dx: number): HandObservation[] => ([
+    { landmarks: points(1, .32, 1 - (.30 + dx)), handedness: 'Left', confidence: .99 },
+    { landmarks: points(1, .32, 1 - (.46 + dx)), handedness: 'Right', confidence: .99 },
+  ]);
+  // Palm breadth is about 6% of the image; their centers remain 16% apart.
+  for (let t = 0; t <= 240; t += 40) tracker.update(samples(0), t);
+  for (let i = 1; i <= 7; i++) tracker.update(samples(.18 * i / 7), 240 + i * 40);
+  assert.equal(flower(tracker, 'Left', 520), 'lotus');
+  assert.equal(flower(tracker, 'Right', 520), 'lotus');
+});
+
+test('vertically separated palms with equal x can swipe in parallel', () => {
+  const tracker = new HandGestureTracker();
+  const samples = (dx: number): HandObservation[] => ([
+    { landmarks: points(1, .32, 1 - (.30 + dx), .40), handedness: 'Left', confidence: .99 },
+    { landmarks: points(1, .32, 1 - (.30 + dx), .56), handedness: 'Right', confidence: .99 },
+  ]);
+  for (let t = 0; t <= 240; t += 40) tracker.update(samples(0), t);
+  for (let i = 1; i <= 7; i++) tracker.update(samples(.18 * i / 7), 240 + i * 40);
+  assert.equal(flower(tracker, 'Left', 520), 'lotus');
+  assert.equal(flower(tracker, 'Right', 520), 'lotus');
+});
+
+test('outward swipes switch each hand in its own mirrored direction', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker, [.32, .68], 0, ['Left', 'Right']);
+  for (let i = 1; i <= 6; i++) {
+    tracker.update([observation(.32 - .16 * i / 6, 'Left'), observation(.68 + .16 * i / 6, 'Right')], 240 + i * 40);
+  }
+  assert.equal(flower(tracker, 'Left', 480), 'orchid');
+  assert.equal(flower(tracker, 'Right', 480), 'lotus');
+});
+
+test('inward swipes without overlap switch each hand in its own direction', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker, [.22, .78], 0, ['Left', 'Right']);
+  for (let i = 1; i <= 6; i++) {
+    tracker.update([observation(.22 + .16 * i / 6, 'Left'), observation(.78 - .16 * i / 6, 'Right')], 240 + i * 40);
+  }
+  assert.equal(flower(tracker, 'Left', 480), 'lotus');
+  assert.equal(flower(tracker, 'Right', 480), 'orchid');
+});
+
+test('inward swipes can stop near each other without being mistaken for a future crossing', () => {
+  const tracker = new HandGestureTracker();
+  const samples = (dx: number): HandObservation[] => ([
+    { landmarks: points(1, .32, 1 - (.27 + dx)), handedness: 'Left', confidence: .99 },
+    { landmarks: points(1, .32, 1 - (.73 - dx)), handedness: 'Right', confidence: .99 },
+  ]);
+  for (let t = 0; t <= 240; t += 40) tracker.update(samples(0), t);
+  for (let i = 1; i <= 3; i++) tracker.update(samples(.05 * i), 240 + i * 80);
+  for (let t = 560; t <= 720; t += 80) tracker.update(samples(.15), t);
+  assert.equal(flower(tracker, 'Left', 720), 'lotus');
+  assert.equal(flower(tracker, 'Right', 720), 'orchid');
+});
+
+test('swipe distance follows visible palm size with bounded screen displacement', () => {
+  for (const [scale, travel, duration] of [[.2, .11, 200], [.35, .14, 240], [.75, .19, 320]] as const) {
+    const tracker = new HandGestureTracker();
+    const sample = (x: number): HandObservation => ({ landmarks: points(1, scale, 1 - x), handedness: 'Left', confidence: .99 });
+    for (let t = 0; t <= 240; t += 40) tracker.update([sample(.28)], t);
+    const steps = duration / 40;
+    for (let i = 1; i <= steps; i++) tracker.update([sample(.28 + travel * i / steps)], 240 + i * 40);
+    assert.equal(flower(tracker, 'Left', 240 + duration), 'lotus', `palm scale ${scale}`);
+  }
+});
+
+test('a moderate diagonal swipe remains a horizontal flower command', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker);
+  swipe(tracker, .28, .46, 240, { yTravel: .1 });
+  assert.equal(flower(tracker, 'Left', 520), 'lotus');
+});
+
+test('small openness fluctuations during a swipe do not discard its motion', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker);
+  assert.ok(computeOpenness(observation(.28, 'Left', .7).landmarks) < .55);
+  for (let i = 1; i <= 7; i++) {
+    tracker.update([observation(.28 + .30 * i / 7, 'Left', i === 3 || i === 4 ? .7 : 1)], 240 + i * 40);
+  }
+  assert.equal(flower(tracker, 'Left', 520), 'lotus');
+});
+
+test('two hands recognize a coherent swipe at uneven 8–15fps inference intervals', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker, [.18, .62], 0, ['Left', 'Right']);
+  const frames = [[320, .055], [387, .11], [512, .18]] as const;
+  for (const [time, dx] of frames) {
+    tracker.update([observation(.18 + dx, 'Left'), observation(.62 + dx, 'Right')], time);
+  }
+  assert.equal(flower(tracker, 'Left', 512), 'lotus');
+  assert.equal(flower(tracker, 'Right', 512), 'lotus');
+});
+
+test('the same captured swipe has the same result despite varying inference latency', () => {
+  for (const delayed of [false, true]) {
+    const tracker = new HandGestureTracker();
+    const receiveTime = (capturedAt: number): number => delayed ? capturedAt * 4 + 100 : capturedAt;
+    for (let t = 0; t <= 240; t += 40) tracker.update([observation(.28)], t, receiveTime(t));
+    for (let i = 1; i <= 6; i++) {
+      const capturedAt = 240 + i * 40;
+      tracker.update([observation(.28 + .30 * i / 6)], capturedAt, receiveTime(capturedAt));
+    }
+    assert.equal(flower(tracker, 'Left', receiveTime(480)), 'lotus', `delayed=${delayed}`);
+  }
+});
+
+test('a slow inference result is fully visible when it is first received', () => {
+  const tracker = new HandGestureTracker();
+  const [hand] = tracker.update([observation(.28)], 100, 800);
+  assert.ok(hand);
+  assert.equal(hand.lastSeen, 800);
+  assert.equal(hand.opacity, 1);
+  assert.equal(tracker.getHands(900)[0]!.opacity, 1);
+});
+
+test('manual flower selection receives a full cooldown from its actual interaction time', () => {
+  const tracker = new HandGestureTracker();
+  const [hand] = tracker.update([observation(.28)], 100, 800);
+  tracker.setFlower(hand!.id, 'plum', 900);
+  assert.equal(tracker.getHands(900)[0]!.switchedAt, 900);
+  for (let t = 900; t <= 1140; t += 40) tracker.update([observation(.28)], t, t + 10);
+  for (let i = 1; i <= 6; i++) tracker.update([observation(.28 + .18 * i / 6)], 1140 + i * 40, 1150 + i * 40);
+  assert.equal(flower(tracker, 'Left', 1390), 'plum');
+  for (let t = 1800; t <= 2040; t += 40) tracker.update([observation(.46)], t, t + 10);
+  for (let i = 1; i <= 6; i++) tracker.update([observation(.46 + .18 * i / 6)], 2040 + i * 40, 2050 + i * 40);
+  assert.equal(flower(tracker, 'Left', 2290), 'chrysanthemum');
+});
+
+test('an automatic flower switch starts cooldown when its result becomes visible', () => {
+  const tracker = new HandGestureTracker();
+  for (let t = 0; t <= 240; t += 40) tracker.update([observation(.28)], t, t + 400);
+  for (let i = 1; i <= 6; i++) tracker.update([observation(.28 + .30 * i / 6)], 240 + i * 40, 640 + i * 40);
+  assert.equal(flower(tracker, 'Left', 880), 'lotus');
+  for (let t = 800; t <= 1280; t += 40) tracker.update([observation(.58)], t, t + 400);
+  for (let i = 1; i <= 6; i++) tracker.update([observation(.58 - .18 * i / 6)], 1280 + i * 40, 1680 + i * 40);
+  assert.equal(flower(tracker, 'Left', 1920), 'lotus');
+});
+
+test('a positional jump followed by tiny tracking jitter never becomes a swipe', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker);
+  tracker.update([observation(.65)], 280);
+  for (let t = 320; t <= 600; t += 40) tracker.update([observation(t % 80 ? .655 : .65)], t);
   assert.equal(flower(tracker, 'Left', 600), 'peony');
+});
+
+test('a positional jump cannot turn subsequent slow drift into a swipe', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker);
+  tracker.update([observation(.65)], 280);
+  for (let i = 1; i <= 7; i++) tracker.update([observation(.65 + .015 * i)], 280 + i * 40);
+  assert.equal(flower(tracker, 'Left', 560), 'peony');
+});
+
+test('repeated small horizontal jitter cannot accumulate into a swipe', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker);
+  for (let t = 280; t <= 800; t += 40) tracker.update([observation(t % 80 ? .30 : .28)], t);
+  assert.equal(flower(tracker, 'Left', 800), 'peony');
+});
+
+test('closing the palm resets a partially completed swipe', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker);
+  tracker.update([observation(.35)], 280);
+  tracker.update([observation(.42, 'Left', 0)], 320);
+  tracker.update([observation(.49)], 360);
+  tracker.update([observation(.56)], 400);
+  tracker.update([observation(.63)], 440);
+  assert.equal(flower(tracker, 'Left', 440), 'peony');
+});
+
+test('a continuous extended wave switches only one flower step', () => {
+  const tracker = new HandGestureTracker();
+  stabilize(tracker);
+  swipe(tracker, .28, .88, 240, { duration: 440 });
+  for (let t = 720; t <= 1480; t += 40) tracker.update([observation(.88)], t);
+  assert.equal(flower(tracker, 'Left', 1480), 'lotus');
 });
 
 
@@ -261,6 +456,14 @@ test('continuous 5–6fps inference preserves identity, arms, and recognizes one
     const [held] = tracker.update([observation(.54)], 6 * interval);
     assert.equal(held!.flower, 'lotus');
   }
+});
+
+test('a natural 17% swipe remains usable with two 200ms inference steps', () => {
+  const tracker = new HandGestureTracker();
+  for (let t = 0; t <= 600; t += 200) tracker.update([observation(.28)], t);
+  tracker.update([observation(.365)], 800);
+  tracker.update([observation(.45)], 1000);
+  assert.equal(flower(tracker, 'Left', 1000), 'lotus');
 });
 
 test('an explicit no-hand frame clears low-fps swipe history before reentry', () => {

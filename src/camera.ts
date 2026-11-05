@@ -18,7 +18,7 @@ export class HandCamera {
 
   constructor(
     private video: HTMLVideoElement,
-    private onResults: (hands: HandObservation[], time: number) => void,
+    private onResults: (hands: HandObservation[], capturedAt: number, receivedAt: number) => void,
     private onStatus: (status: CameraStatus) => void,
   ) {}
 
@@ -70,7 +70,8 @@ export class HandCamera {
   stop(): void {
     ++this.generation;
     this.release();
-    this.onResults([], performance.now());
+    const stoppedAt = performance.now();
+    this.onResults([], stoppedAt, stoppedAt);
     this.setStatus('idle', '摄像头已关闭');
   }
 
@@ -96,7 +97,8 @@ export class HandCamera {
       this.lastInference = now;
       try {
         const start = performance.now();
-        const result = this.model.detectForVideo(this.video, now);
+        const capturedAt = performance.now();
+        const result = this.model.detectForVideo(this.video, capturedAt);
         if (performance.now() - start > 65) this.interval = 100;
         const hands: HandObservation[] = result.landmarks.map((landmarks, i) => {
           const category = result.handedness[i]?.[0];
@@ -105,8 +107,8 @@ export class HandCamera {
           return { landmarks, worldLandmarks: result.worldLandmarks[i], handedness,
             confidence: category?.score ?? 0, imageAspect: this.video.videoWidth / this.video.videoHeight };
         });
-        // A slow inference must still be fresh when its result reaches the UI.
-        this.onResults(hands, performance.now());
+        // Gesture speed follows capture time; UI freshness follows arrival time.
+        this.onResults(hands, capturedAt, performance.now());
         this.samples++;
         if (now - this.lastSample >= 1200) {
           this.onStatus({ phase: 'running', message: hands.length ? '手部追踪中' : '请将手掌放入画面', fps: Math.round(this.samples * 1000 / (now - this.lastSample)) });
@@ -115,7 +117,8 @@ export class HandCamera {
         }
       } catch (error) {
         this.release();
-        this.onResults([], now);
+        const failedAt = performance.now();
+        this.onResults([], failedAt, failedAt);
         this.setStatus('error', '识别暂时中断，请重新开启摄像头。' + (error instanceof Error && error.message.includes('fetch') ? '请检查网络。' : ''));
         return;
       }

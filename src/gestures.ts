@@ -41,6 +41,7 @@ interface Track {
 interface Observation {
   source: HandObservation;
   palm: MotionPoint;
+  palmWidth: number;
   openness: number;
 }
 const PALM_POINTS = [0, 5, 9, 13, 17];
@@ -51,15 +52,28 @@ const TRACK_RETENTION = 1000;
 const MOTION_GAP = 450;
 const COOLDOWN = 900;
 const STABLE_MS = 200;
+// Require a deliberate open palm to arm; minor curl/landmark fluctuation during
+// the stroke should not erase it. A clearly closed palm always cancels it.
 const OPEN_THRESHOLD = .55;
+const CLOSE_THRESHOLD = .40;
+const SWIPE_WINDOW = 450;
+const MIN_SWIPE_MS = 120;
+const MIN_SWIPE_SPEED = .0004; // Screen widths/ms: permits a 17%/400ms wave, rejects 32%/s drift.
+const MIN_SWIPE_DISTANCE = .10;
+const MAX_SWIPE_DISTANCE = .18;
+const SWIPE_PALM_WIDTHS = 1.8;
 
 function prepare(source: HandObservation, timestamp: number): Observation | undefined {
   if (!validLandmarks(source.landmarks) || !Number.isFinite(source.confidence) || source.confidence < .25) return;
   let x = 0; let y = 0;
   for (const i of PALM_POINTS) { x += 1 - source.landmarks[i]!.x; y += source.landmarks[i]!.y; }
+  const aspect = Number.isFinite(source.imageAspect) && source.imageAspect! > 0 ? source.imageAspect! : 1;
+  const knuckleA = source.landmarks[5]!; const knuckleB = source.landmarks[17]!;
   return {
     source,
     palm: { x: x / PALM_POINTS.length, y: y / PALM_POINTS.length, t: timestamp },
+    // Measure apparent palm size in image-width units, including rotated palms.
+    palmWidth: Math.hypot(knuckleA.x - knuckleB.x, (knuckleA.y - knuckleB.y) / aspect),
     openness: computeOpenness(source.landmarks, source.worldLandmarks, source.imageAspect),
   };
 }
@@ -74,16 +88,21 @@ export class HandGestureTracker {
   private nextId = 1;
   private remembered = new Map<Handedness, FlowerType>();
   private lastTimestamp = -Infinity;
+  private lastReceivedAt = -Infinity;
 
-  update(observations: HandObservation[], timestamp: number): TrackedHand[] {
-    if (!Number.isFinite(timestamp) || timestamp < this.lastTimestamp) return this.getHands(this.lastTimestamp);
-    this.lastTimestamp = timestamp;
-    this.releaseOldTracks(timestamp);
-    const inputs = observations.map(source => prepare(source, timestamp))
+  update(observations: HandObservation[], capturedAt: number, receivedAt = capturedAt): TrackedHand[] {
+    if (!Number.isFinite(capturedAt) || capturedAt < this.lastTimestamp || !Number.isFinite(receivedAt)) {
+      return this.getHands(this.lastReceivedAt);
+    }
+    this.lastTimestamp = capturedAt;
+    this.lastReceivedAt = receivedAt;
+    this.releaseOldTracks(receivedAt);
+    const inputs = observations.map(source => prepare(source, capturedAt))
       .filter((observation): observation is Observation => !!observation)
       .sort((a, b) => b.source.confidence - a.source.confidence).slice(0, 2);
     const matches = this.associate(inputs);
     const ambiguous = this.isAmbiguous(inputs, matches);
+    const deferSwipe = !ambiguous && this.isApproachingOverlap(inputs, matches);
     const seen = new Set<Track>();
     for (let i = 0; i < inputs.length; i++) {
       const input = inputs[i]!;
@@ -97,10 +116,10 @@ export class HandGestureTracker {
           if (removable) this.tracks.splice(this.tracks.indexOf(removable), 1);
         }
         if (this.tracks.length >= 2) continue;
-        track = this.createTrack(input);
+        track = this.createTrack(input, receivedAt);
         this.tracks.push(track);
       } else {
-        this.applyObservation(track, input, ambiguous);
+        this.applyObservation(track, input, ambiguous, receivedAt, deferSwipe);
       }
       if (ambiguous) this.resetMotion(track, input.palm);
       seen.add(track);
@@ -108,11 +127,11 @@ export class HandGestureTracker {
     for (const track of this.tracks) {
       if (!seen.has(track)) { track.present = false; this.resetMotion(track, track.palm); }
     }
-    return this.getHands(timestamp);
+    return this.getHands(receivedAt);
   }
 
   getHands(timestamp: number): TrackedHand[] {
-    const time = Number.isFinite(timestamp) ? timestamp : this.lastTimestamp;
+    const time = Number.isFinite(timestamp) ? timestamp : this.lastReceivedAt;
     this.releaseOldTracks(time);
     return this.tracks.flatMap(track => {
       // Hold through slower 10fps CPU inference intervals, then fade until 350ms.
@@ -122,13 +141,14 @@ export class HandGestureTracker {
     });
   }
 
-  setFlower(id: string, flower: FlowerType): void {
+  setFlower(id: string, flower: FlowerType, changedAt?: number): void {
     if (!FLOWERS.some(candidate => candidate.type === flower)) return;
     const track = this.tracks.find(candidate => candidate.hand.id === id);
     if (!track) return;
+    const visibleAt = Number.isFinite(changedAt) ? Math.max(track.hand.lastSeen, changedAt!) : track.hand.lastSeen;
     track.hand.flower = flower;
-    track.hand.switchedAt = track.hand.lastSeen;
-    track.cooldownUntil = track.hand.lastSeen + COOLDOWN;
+    track.hand.switchedAt = visibleAt;
+    track.cooldownUntil = visibleAt + COOLDOWN;
     this.resetMotion(track, track.palm);
     this.rememberFlower(track);
   }
@@ -145,13 +165,14 @@ export class HandGestureTracker {
     this.tracks = [];
     this.remembered.clear();
     this.lastTimestamp = -Infinity;
+    this.lastReceivedAt = -Infinity;
   }
 
   private releaseOldTracks(timestamp: number): void {
     this.tracks = this.tracks.filter(track => timestamp - track.hand.lastSeen <= TRACK_RETENTION);
   }
 
-  private createTrack(input: Observation): Track {
+  private createTrack(input: Observation, receivedAt: number): Track {
     const source = input.source;
     const handedness = reliableLabel(source) ? source.handedness : 'Unknown';
     const tip = source.landmarks[8]!;
@@ -159,7 +180,7 @@ export class HandGestureTracker {
       id: `hand-${this.nextId++}`, x: clamp(1 - tip.x), y: clamp(tip.y),
       openness: input.openness, flower: this.remembered.get(handedness) ?? 'peony',
       opacity: 1, phase: this.nextId * 1.618, handedness,
-      landmarks: source.landmarks, lastSeen: input.palm.t, switchedAt: -Infinity,
+      landmarks: source.landmarks, lastSeen: receivedAt, switchedAt: -Infinity,
     };
     return {
       hand, palm: input.palm, confidence: source.confidence, present: true,
@@ -200,10 +221,14 @@ export class HandGestureTracker {
   private isAmbiguous(inputs: Observation[], matches: (Track | undefined)[]): boolean {
     if (inputs.length !== 2) return false;
     const [a, b] = inputs as [Observation, Observation];
-    if (palmDistance(a.palm, b.palm) < .18) return true;
+    // Fixed image distance used to suppress two distinct smaller hands even
+    // while they travelled in parallel. Reserve the guard for actual palm
+    // proximity, scaled to their visible breadth.
+    const overlapDistance = Math.max(.045, (a.palmWidth + b.palmWidth) * .7);
+    if (palmDistance(a.palm, b.palm) < overlapDistance) return true;
     const [oldA, oldB] = matches;
     if (oldA && oldB) {
-      const crossed = (oldA.palm.x - oldB.palm.x) * (a.palm.x - b.palm.x) <= 0;
+      const crossed = (oldA.palm.x - oldB.palm.x) * (a.palm.x - b.palm.x) < 0;
       if (crossed && Math.abs(a.palm.y - b.palm.y) < .2) return true;
     }
     // If both labels are weak, a similarly plausible spatial assignment is
@@ -219,8 +244,22 @@ export class HandGestureTracker {
     return false;
   }
 
-  private applyObservation(track: Track, input: Observation, ambiguous: boolean): void {
-    const elapsed = Math.max(0, input.palm.t - track.hand.lastSeen);
+  private isApproachingOverlap(inputs: Observation[], matches: (Track | undefined)[]): boolean {
+    if (inputs.length !== 2) return false;
+    const [a, b] = inputs as [Observation, Observation];
+    const [oldA, oldB] = matches;
+    if (!oldA || !oldB || palmDistance(a.palm, b.palm) >= palmDistance(oldA.palm, oldB.palm)) return false;
+    const nextX = 2 * (a.palm.x - b.palm.x) - (oldA.palm.x - oldB.palm.x);
+    const nextY = 2 * (a.palm.y - b.palm.y) - (oldA.palm.y - oldB.palm.y);
+    // Keep a candidate while approaching, and wait one frame to distinguish a
+    // near stop from actual overlap. Only observed ambiguity clears its motion.
+    return Math.hypot(nextX, nextY) < Math.max(.045, (a.palmWidth + b.palmWidth) * .7);
+  }
+
+  private applyObservation(track: Track, input: Observation, ambiguous: boolean, receivedAt: number, deferSwipe: boolean): void {
+    // Gesture timing follows captured frames; visibility starts when a result
+    // arrives. Inference latency must not stretch a stroke or fade a new result.
+    const elapsed = Math.max(0, input.palm.t - track.palm.t);
     const reentered = !track.present || elapsed > MOTION_GAP;
     const positionAlpha = reentered ? 1 : 1 - Math.exp(-elapsed / 55);
     const openAlpha = reentered ? 1 : 1 - Math.exp(-elapsed / 85);
@@ -229,7 +268,7 @@ export class HandGestureTracker {
     track.hand.y += (clamp(tip.y) - track.hand.y) * positionAlpha;
     track.hand.openness += (input.openness - track.hand.openness) * openAlpha;
     track.hand.landmarks = input.source.landmarks;
-    track.hand.lastSeen = input.palm.t;
+    track.hand.lastSeen = receivedAt;
     // Once a label is established, a later classification never reassigns the
     // track. Spatial matching can bridge brief classification flicker.
     if (track.hand.handedness === 'Unknown' && reliableLabel(input.source) && !ambiguous) {
@@ -241,7 +280,7 @@ export class HandGestureTracker {
     track.present = true;
     track.palm = input.palm;
     if (reentered || ambiguous) this.resetMotion(track, input.palm);
-    else this.advanceGesture(track, input);
+    else this.advanceGesture(track, input, deferSwipe);
   }
 
   private resetMotion(track: Track, point: MotionPoint): void {
@@ -250,9 +289,9 @@ export class HandGestureTracker {
     track.motion = [];
   }
 
-  private advanceGesture(track: Track, input: Observation): void {
+  private advanceGesture(track: Track, input: Observation, deferSwipe: boolean): void {
     const point = input.palm;
-    if (input.openness < OPEN_THRESHOLD) { this.resetMotion(track, point); return; }
+    if (input.openness < (track.armed ? CLOSE_THRESHOLD : OPEN_THRESHOLD)) { this.resetMotion(track, point); return; }
     if (!track.armed) {
       if (Math.abs(point.x - track.stableAnchor.x) > .03 || Math.abs(point.y - track.stableAnchor.y) > .035) {
         track.stableAnchor = point;
@@ -264,23 +303,35 @@ export class HandGestureTracker {
       return;
     }
     track.motion.push(point);
-    track.motion = track.motion.filter(sample => point.t - sample.t <= 450);
+    track.motion = track.motion.filter(sample => point.t - sample.t <= SWIPE_WINDOW);
+    if (deferSwipe) return;
+    const swipeDistance = clamp(input.palmWidth * SWIPE_PALM_WIDTHS, MIN_SWIPE_DISTANCE, MAX_SWIPE_DISTANCE);
     for (let start = 0; start < track.motion.length - 1; start++) {
       const first = track.motion[start]!;
       const duration = point.t - first.t;
       const dx = point.x - first.x;
       const dy = point.y - first.y;
-      if (duration < 180 || duration > 450 || Math.abs(dx) < .22 || Math.abs(dy) > .085) continue;
+      if (duration < MIN_SWIPE_MS || duration > SWIPE_WINDOW || Math.abs(dx) < swipeDistance ||
+          Math.abs(dy) > Math.max(.085, Math.abs(dx) * .65)) continue;
       let horizontalPath = 0; let verticalPath = 0; let movingDuration = 0;
+      let movingSegments = 0; let largestStep = 0; let secondLargestStep = 0;
       for (let i = start + 1; i < track.motion.length; i++) {
         const movement = Math.abs(track.motion[i]!.x - track.motion[i - 1]!.x);
         horizontalPath += movement;
-        // Stable time before/after a quick jump must not pad a short stroke
-        // into the qualifying 180ms recognition window.
-        if (movement > .002) movingDuration += track.motion[i]!.t - track.motion[i - 1]!.t;
+        if (movement > largestStep) { secondLargestStep = largestStep; largestStep = movement; }
+        else secondLargestStep = Math.max(secondLargestStep, movement);
+        // Two meaningful movement intervals distinguish a real quick wave
+        // from one tracking jump padded by still frames or tiny jitter.
+        if (movement >= Math.max(.006, swipeDistance * .12)) {
+          movingDuration += track.motion[i]!.t - track.motion[i - 1]!.t;
+          movingSegments++;
+        }
         verticalPath += Math.abs(track.motion[i]!.y - track.motion[i - 1]!.y);
       }
-      if (movingDuration < 180 || Math.abs(dx) / Math.max(horizontalPath, 1e-6) < .85 || verticalPath > .13) continue;
+      if (movingDuration < MIN_SWIPE_MS || movingSegments < 2 || secondLargestStep < largestStep * .2 ||
+          largestStep / horizontalPath > .8 ||
+          Math.abs(dx) / movingDuration < MIN_SWIPE_SPEED || Math.abs(dx) / Math.max(horizontalPath, 1e-6) < .85 ||
+          verticalPath > Math.max(.13, Math.abs(dx) * .8)) continue;
       this.cycleFlower(track.hand.id, Math.sign(dx));
       return;
     }

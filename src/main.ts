@@ -3,6 +3,7 @@ import { FLOWERS, type FlowerState, type FlowerType, type HandObservation, type 
 import { InkGardenRenderer } from './ink-renderer';
 import { HandGestureTracker } from './gestures';
 import { HandSlots } from './hand-slots';
+import { synchronizeFlowerSelection } from './flower-selection';
 import { HandCamera, type CameraStatus } from './camera';
 
 const icon = (name: string) => {
@@ -42,7 +43,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <button class="exit-immersive" id="exit-immersive" hidden>${icon('close')}退出沉浸</button>
         </div>
         <div class="canvas-tools">
-          <p id="canvas-help">张开手掌，花朵绽放；轻挥双手，四时轮转。</p>
+          <p id="canvas-help">张开手掌，花朵绽放；停稳后左右挥动，切换各自花型。</p>
           <div><button class="text-tool" id="fullscreen">${icon('expand')}<span>沉浸</span></button><button class="text-tool" id="save-art">${icon('download')}<span>存画</span></button></div>
         </div>
       </div>
@@ -56,7 +57,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <div class="hand-slots"><button class="hand-slot selected" data-slot="0" aria-pressed="true"><span class="slot-dot"></span><span><b>第一朵</b><small id="slot-name-0">牡丹 · 预览</small></span><span class="slot-meter"><i id="slot-meter-0"></i></span></button><button class="hand-slot" data-slot="1" aria-pressed="false"><span class="slot-dot"></span><span><b>第二朵</b><small id="slot-name-1">荷花 · 预览</small></span><span class="slot-meter"><i id="slot-meter-1"></i></span></button></div>
         </div>
         <div class="demo-controls" id="demo-controls" hidden><label for="bloom-range">花开几分 <output id="bloom-value">80%</output></label><input id="bloom-range" type="range" min="0" max="100" value="80"/><small>拖动画布移动花朵，滑动调节开合。</small></div>
-        <div class="gesture-guide"><div class="section-label"><span>三式入门</span><span>随手，即成画</span></div><ol><li><span class="gesture-number">一</span><div><b>移手 · 花随指行</b><p>食指所至，花朵相随</p></div></li><li><span class="gesture-number">二</span><div><b>张合 · 花开有度</b><p>收拢成苞，舒掌盛放</p></div></li><li><span class="gesture-number">三</span><div><b>挥手 · 换一种花</b><p>快速左挥或右挥，各换各的花</p></div></li></ol></div>
+        <div class="gesture-guide"><div class="section-label"><span>三式入门</span><span>随手，即成画</span></div><ol><li><span class="gesture-number">一</span><div><b>移手 · 花随指行</b><p>食指所至，花朵相随</p></div></li><li><span class="gesture-number">二</span><div><b>张合 · 花开有度</b><p>收拢成苞，舒掌盛放</p></div></li><li><span class="gesture-number">三</span><div><b>挥手 · 换一种花</b><p>舒掌停稳后左右挥动，各换各的花</p></div></li></ol></div>
       </aside>
     </section>
 
@@ -92,7 +93,7 @@ const demoFlowers: FlowerState[] = [
   { id: 'demo-2', x: 0.72, y: 0.48, openness: 0.9, flower: 'lotus', opacity: 1, phase: 6.2 },
 ];
 const flowerMemory = new Map<string, FlowerType>();
-const preferredFlowers: (FlowerType | null)[] = [null, null];
+const displayedFlowers: (FlowerType | null)[] = [null, null];
 const pendingFlowers: (FlowerType | null)[] = [null, null];
 
 function toast(message: string) {
@@ -136,8 +137,9 @@ function updateUi(now: number) {
   $('#inscription').classList.toggle('quiet', mode === 'camera');
   $('#canvas-mode').textContent = mode === 'camera' ? '写意 · 手势入画' : mode === 'demo' ? '写意 · 赏花体验' : '写意 · 赏花';
   $('#canvas-caption').textContent = mode === 'camera' ? (visible.length ? visible.map(h => FLOWERS.find(f => f.type === h.flower)!.name).join(' · ') : '静候花开') : mode === 'demo' ? '拖动画布 · 调节花开几分' : demoFlowers.map(f => FLOWERS.find(entry => entry.type === f.flower)!.name).join('与') + ' · 浓淡相宜';
-  $('#canvas-help').textContent = mode === 'demo' ? '拖动画布移动选中的花，用右侧滑杆调节开合。' : '张开手掌，花朵绽放；轻挥双手，四时轮转。';
+  $('#canvas-help').textContent = mode === 'demo' ? '拖动画布移动选中的花，用右侧滑杆调节开合。' : '张开手掌，花朵绽放；停稳后左右挥动，切换各自花型。';
   const slots = document.querySelectorAll<HTMLButtonElement>('.hand-slot');
+  const changedFlowers: string[] = [];
   slots.forEach((button, index) => {
     const hand = flowers[index];
     const present = mode !== 'camera' || Boolean(hand && (hand as TrackedHand).lastSeen > now - 220);
@@ -148,11 +150,12 @@ function updateUi(now: number) {
     $(`#slot-meter-${index}`).style.width = `${hand ? Math.round(hand.openness * 100) : 0}%`;
     if (mode === 'camera' && hand) {
       const previous = flowerMemory.get(hand.id);
-      if (previous && previous !== hand.flower) toast(`已换为${FLOWERS.find(f => f.type === hand.flower)!.name}`);
+      if (previous && previous !== hand.flower) changedFlowers.push(`第${index === 0 ? '一' : '二'}朵 · ${FLOWERS.find(f => f.type === hand.flower)!.name}`);
       flowerMemory.set(hand.id, hand.flower);
     }
   });
-  const chosen = flowers[selectedSlot]?.flower ?? preferredFlowers[selectedSlot] ?? 'peony';
+  if (changedFlowers.length) toast(changedFlowers.join('，'));
+  const chosen = flowers[selectedSlot]?.flower ?? pendingFlowers[selectedSlot] ?? displayedFlowers[selectedSlot] ?? 'peony';
   document.querySelectorAll<HTMLButtonElement>('[data-flower]').forEach(button => {
     const active = button.dataset.flower === chosen;
     button.classList.toggle('active', active);
@@ -161,17 +164,12 @@ function updateUi(now: number) {
   $('#palette-target').textContent = `为第${selectedSlot === 0 ? '一' : '二'}朵选花`;
 }
 
-const camera = new HandCamera(video, (observations, now) => {
+const camera = new HandCamera(video, (observations, capturedAt, receivedAt) => {
   latestObservations = observations;
-  latestDetectionAt = now;
-  const hands = tracker.update(observations, now);
-  handSlots.observe(hands.map(hand => hand.id));
+  latestDetectionAt = receivedAt;
+  const hands = tracker.update(observations, capturedAt, receivedAt);
+  synchronizeFlowerSelection(tracker, handSlots, hands, pendingFlowers, displayedFlowers);
   hands.forEach(hand => {
-    const index = handSlots.indexOf(hand.id);
-    if (pendingFlowers[index]) {
-      tracker.setFlower(hand.id, pendingFlowers[index]!);
-      pendingFlowers[index] = null;
-    } else if (!flowerMemory.has(hand.id) && preferredFlowers[index]) tracker.setFlower(hand.id, preferredFlowers[index]!);
     if (!flowerMemory.has(hand.id)) flowerMemory.set(hand.id, hand.flower);
   });
 }, status => {
@@ -245,13 +243,13 @@ document.querySelectorAll<HTMLButtonElement>('[data-flower]').forEach(button => 
   const flower = button.dataset.flower as FlowerType;
   if (mode === 'camera') {
     const hand = currentSlots(performance.now())[selectedSlot];
-    if (hand) tracker.setFlower(hand.id, flower);
+    if (hand) tracker.setFlower(hand.id, flower, performance.now());
     else {
       pendingFlowers[selectedSlot] = flower;
       const retainedId = handSlots.ids[selectedSlot];
-      if (retainedId) tracker.setFlower(retainedId, flower);
+      if (retainedId) tracker.setFlower(retainedId, flower, performance.now());
     }
-    preferredFlowers[selectedSlot] = flower;
+    displayedFlowers[selectedSlot] = flower;
     if (!hand) toast('已选好花型，手掌入镜后即可绽放');
   } else demoFlowers[selectedSlot].flower = flower;
   updateUi(performance.now());
