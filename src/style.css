@@ -116,6 +116,43 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .toast { position: fixed; left: 50%; bottom: calc(30px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px); background: #3d493bea; color: #fff8ea; padding: 13px 23px; font-size: 12px; letter-spacing: 1px; max-width: calc(100vw - 36px); text-align: center; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 200; line-height: 1.8; }
 .toast.visible { opacity: 1; transform: translate(-50%, 0); }
 
+.ambience { margin-top: 20px; padding: 16px 0 0; border-top: 1px solid var(--line); }
+.ambience-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
+.ambience-heading > span:last-child { font: 10px 'Noto Serif SC', serif; color: #8c927f; letter-spacing: 1px; }
+.landscape-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.landscape-options button { min-width: 0; min-height: 48px; padding: 9px 5px; display: flex; justify-content: center; align-items: center; gap: 9px; background: #f6f3e9; border: 1px solid #deded0; font: 12px 'Noto Serif SC', 'Songti SC', serif; }
+.landscape-options button[aria-pressed="true"] { border-color: #a3ad91; background: #eceedf; color: #4f6049; }
+.landscape-mark { width: 24px; height: 20px; flex-shrink: 0; opacity: .7; }
+.scene-mountains { background: #879a88; clip-path: polygon(0 90%,35% 20%,51% 60%,73% 2%,100% 90%); }
+.scene-waterside { border-bottom: 2px solid #829789; background: linear-gradient(155deg,transparent 47%,#829789 49% 53%,transparent 55%) 4px 0/16px 12px no-repeat,linear-gradient(#829789,#829789) 8px 9px/11px 7px no-repeat; }
+.scene-bamboo { background: repeating-linear-gradient(90deg,transparent 0 4px,#809573 5px 6px,transparent 7px 10px); transform: skew(-9deg); }
+.scene-moonlake { background: radial-gradient(circle at 65% 35%,#c2ac73 0 4px,transparent 5px),linear-gradient(#90a4a0,#90a4a0) 0 17px/24px 1px no-repeat; }
+.music-line { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 15px 0 2px; flex-wrap: wrap; }
+.music-line > div:first-child { min-width: 0; }
+.music-line b { display: block; color: #68735f; font: 11px 'Noto Serif SC', serif; letter-spacing: 1px; }
+.music-line small { display: block; color: #969b8b; font-size: 9px; line-height: 1.7; margin-top: 6px; }
+.music-controls { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.music-controls button { border: 1px solid #cbcdbb; background: #f2efe4; min-height: 44px; min-width: 44px; padding: 8px 11px; font-size: 11px; white-space: nowrap; color: #6b775e; }
+.music-controls button[aria-pressed="true"] { background: #e7ebda; border-color: #a3ad91; }
+.volume-control { width: 112px; display: flex; flex-direction: column; gap: 2px; }
+.volume-control > span { color: #8a907d; font-size: 9px; display: flex; justify-content: space-between; }
+.music-controls input[type="range"] { accent-color: #798765; height: 28px; min-width: 60px; width: 100%; margin: 0; }
+.immersive-music { position: absolute; z-index: 6; left: 16px; bottom: 125px; max-width: calc(100% - 32px); padding: 6px; background: #f7f3e9f2; border: 1px solid #c6cbb8; }
+.immersive-music input { width: 105px !important; }
+.demo-controls label:not(:first-child) { margin-top: 10px; }
+@media (max-width: 680px) {
+  .ambience { margin-top: 15px; padding-top: 13px; }
+  .ambience-heading > span:last-child { font-size: 9px; letter-spacing: 0; }
+  .landscape-options { gap: 5px; }
+  .landscape-options button { flex-direction: column; gap: 5px; font-size: 10px; min-height: 57px; padding: 7px 2px; }
+  .landscape-mark { width: 22px; height: 17px; }
+  .music-line { gap: 10px; padding-top: 13px; }
+  .music-line > .music-controls { width: 100%; }
+  .music-line .volume-control { flex: 1; }
+  .music-controls { gap: 8px; }
+  .immersive-music { left: 10px; bottom: calc(117px + env(safe-area-inset-bottom)); }
+}
+
 .dwell-toolbar { position: absolute; z-index: 4; left: 14px; right: 14px; bottom: 14px; max-width: 610px; margin: 0 auto; padding: 10px; border: 1px solid #b8bba6; background: #f8f4e9f5; box-shadow: 0 2px 14px #39412d0a; }
 .dwell-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 10px; color: #70785f; margin-bottom: 8px; line-height: 1.5; }
 .dwell-heading b { font-weight: 500; color: var(--cinnabar); }
@@ -216,3 +253,5 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 }
 @media (max-width: 360px) { .atelier { padding: 0 12px; } .brand strong { font-size: 21px; } .edition { font-size: 8px; } .panel-intro h1 { font-size: 23px; } .flower-thumb { height: 52px; } .flower-name { font-size: 12px; } .canvas-tools p { max-width: 175px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
+
+@media (max-width: 680px) { .gesture-guide ol { grid-template-columns: repeat(2,minmax(0,1fr)); row-gap: 15px; } .gesture-guide p { max-width: none; } }

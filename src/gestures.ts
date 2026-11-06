@@ -1,4 +1,5 @@
 import { FLOWERS } from './types';
+import { HandPoseTracker } from './hand-pose';
 import type { FlowerType, Handedness, HandObservation, Landmark, TrackedHand } from './types';
 
 const clamp = (value: number, min = 0, max = 1): number => Math.min(max, Math.max(min, value));
@@ -67,6 +68,7 @@ const reliableLabel = (source: HandObservation): boolean => source.handedness !=
  */
 export class HandGestureTracker {
   private tracks: Track[] = [];
+  private pose = new HandPoseTracker();
   private nextId = 1;
   private remembered = new Map<Handedness, FlowerType>();
   private lastTimestamp = -Infinity;
@@ -78,7 +80,9 @@ export class HandGestureTracker {
     }
     this.lastTimestamp = capturedAt;
     this.lastReceivedAt = receivedAt;
-    this.releaseOldTracks(receivedAt);
+    // Associate the frame at its capture time before arrival-based fading.
+    // A slow synchronous inference must not expire a hand visible in that frame.
+    this.releaseOldTracks(capturedAt);
     const inputs = observations.map(source => prepare(source, capturedAt))
       .filter((observation): observation is Observation => !!observation)
       .sort((a, b) => b.source.confidence - a.source.confidence).slice(0, 2);
@@ -102,11 +106,17 @@ export class HandGestureTracker {
       } else {
         this.applyObservation(track, input, ambiguous, receivedAt);
       }
+      Object.assign(track.hand, ambiguous ? this.pose.pause(track.hand.id) :
+        this.pose.update(track.hand.id, input.source, capturedAt, input.openness));
       seen.add(track);
     }
     for (const track of this.tracks) {
-      if (!seen.has(track)) track.present = false;
+      if (!seen.has(track)) {
+        track.present = false;
+        Object.assign(track.hand, this.pose.pause(track.hand.id));
+      }
     }
+    this.pose.retain(this.tracks.map(track => track.hand.id));
     return this.getHands(receivedAt);
   }
 
@@ -141,6 +151,7 @@ export class HandGestureTracker {
 
   clear(): void {
     this.tracks = [];
+    this.pose.clear();
     this.remembered.clear();
     this.lastTimestamp = -Infinity;
     this.lastReceivedAt = -Infinity;
@@ -148,6 +159,7 @@ export class HandGestureTracker {
 
   private releaseOldTracks(timestamp: number): void {
     this.tracks = this.tracks.filter(track => timestamp - track.hand.lastSeen <= TRACK_RETENTION);
+    this.pose.retain(this.tracks.map(track => track.hand.id));
   }
 
   private createTrack(input: Observation, receivedAt: number): Track {

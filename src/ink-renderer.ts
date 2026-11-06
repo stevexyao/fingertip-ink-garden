@@ -1,9 +1,12 @@
 import type { FlowerState, FlowerType } from './types';
+import { LANDSCAPES, paintLandscape } from './landscape';
+import type { LandscapeType } from './landscape';
 
 /** A deterministic, paper-and-pigment painter. All positions are in CSS pixels. */
 type RGB = readonly [number, number, number];
 type Point = readonly [number, number];
 interface Anatomy { values: Float32Array; seed: number }
+interface InkRipple { id: string; born: number; life: number; strength: number; phase: number }
 
 const INK: RGB = [37, 46, 38];
 const LEAF: RGB = [47, 72, 51];
@@ -51,20 +54,40 @@ export class InkGardenRenderer {
   private height = 1;
   private dpr = 1;
   private readonly anatomies = new Map<number, Anatomy>();
+  private landscape: LandscapeType | 'none';
+  private paperReady = false;
+  private headRotation = 0;
+  private branchSway = 0;
+  private ripples: InkRipple[] = [];
+  private readonly rippleEmissions = new Map<string, number>();
+  private lastRenderTime = -Infinity;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, scene: LandscapeType | 'none' = 'mountains') {
     const context = canvas.getContext('2d', { alpha: false });
     if (!context) throw new Error('此浏览器无法创建画布，请尝试更新浏览器。');
     this.canvas = canvas;
     this.ctx = context;
     this.paper = document.createElement('canvas');
     this.bristles = this.makeBristles();
+    this.landscape = scene === 'none' || LANDSCAPES.some(candidate => candidate.type === scene) ? scene : 'mountains';
   }
 
+  setLandscape(type: LandscapeType): void {
+    if (!LANDSCAPES.some(candidate => candidate.type === type) || type === this.landscape) return;
+    this.landscape = type;
+    if (this.paperReady) this.paintPaper();
+  }
+
+  getLandscape(): LandscapeType | 'none' { return this.landscape; }
+
   resize(width: number, height: number, dpr: number): void {
-    this.width = Math.max(1, Number.isFinite(width) ? width : 1);
-    this.height = Math.max(1, Number.isFinite(height) ? height : 1);
-    this.dpr = Math.max(0.5, Number.isFinite(dpr) ? dpr : 1);
+    const nextWidth = Math.max(1, Number.isFinite(width) ? width : 1);
+    const nextHeight = Math.max(1, Number.isFinite(height) ? height : 1);
+    const nextDpr = clamp(Number.isFinite(dpr) ? dpr : 1, .5, 2.5);
+    if (this.paperReady && nextWidth === this.width && nextHeight === this.height && nextDpr === this.dpr) return;
+    this.width = nextWidth;
+    this.height = nextHeight;
+    this.dpr = nextDpr;
     this.canvas.width = Math.round(this.width * this.dpr);
     this.canvas.height = Math.round(this.height * this.dpr);
     this.canvas.style.width = `${this.width}px`;
@@ -79,7 +102,10 @@ export class InkGardenRenderer {
     c.globalCompositeOperation = 'source-over';
     c.drawImage(this.paper, 0, 0, this.width, this.height);
     const radius = clamp(Math.min(this.width * 0.155, this.height * 0.163), 48, 114);
-    for (const flower of flowers.slice(0, 2)) {
+    const visible = flowers.slice(0, 2).filter(flower => Number.isFinite(flower.x) && Number.isFinite(flower.y) && flower.opacity > .005);
+    const now = Number.isFinite(time) ? time : 0;
+    this.paintRipples(visible, now, radius);
+    for (const flower of visible) {
       if (!Number.isFinite(flower.x) || !Number.isFinite(flower.y)) continue;
       const opacity = clamp(flower.opacity);
       if (opacity < 0.005) continue;
@@ -88,9 +114,14 @@ export class InkGardenRenderer {
       c.save();
       c.globalAlpha = opacity;
       c.translate(clamp(flower.x) * this.width, clamp(flower.y) * this.height);
-      // The centre stays attached to the fingertip. Only the stalk breathes a little.
-      c.rotate(Math.sin((Number.isFinite(time) ? time : 0) * 0.00036 + anatomy.seed % 97) * 0.009);
-      const r = radius * (flower.flower === 'orchid' ? 0.87 : 1);
+      const motion = clamp(Number.isFinite(flower.motion) ? flower.motion! : 0);
+      const rotation = Number.isFinite(flower.rotation) ? flower.rotation! : 0;
+      this.headRotation = Math.atan2(Math.sin(rotation), Math.cos(rotation));
+      this.branchSway = Math.sin(now * .0014 + anatomy.seed % 97) * (.012 + motion * .02) + Math.sin(now * .0021 + anatomy.seed % 43) * motion * .01;
+      // Every pose transform pivots at (0,0), exactly on the tracked fingertip.
+      // Bound enlargement by the viewport as well as the requested 0.65–1.8x.
+      const scale = clamp(Number.isFinite(flower.scale) ? flower.scale! : 1, .65, 1.8);
+      const r = Math.min(radius * scale, this.width * .27, this.height * .31, 196) * (flower.flower === 'orchid' ? 0.87 : 1);
       switch (flower.flower) {
         case 'peony': this.peony(r, openness, anatomy); break;
         case 'lotus': this.lotus(r, openness, anatomy); break;
@@ -103,6 +134,44 @@ export class InkGardenRenderer {
   }
 
   exportPng(): string { return this.canvas.toDataURL('image/png'); }
+
+  private paintRipples(flowers: FlowerState[], time: number, radius: number): void {
+    if (time < this.lastRenderTime) { this.ripples = []; this.rippleEmissions.clear(); }
+    this.lastRenderTime = time;
+    const current = new Map(flowers.map(flower => [flower.id, flower]));
+    this.ripples = this.ripples.filter(ripple => current.has(ripple.id) && time - ripple.born < ripple.life);
+    for (const id of this.rippleEmissions.keys()) if (!current.has(id)) this.rippleEmissions.delete(id);
+    for (const flower of flowers) {
+      const motion = clamp(Number.isFinite(flower.motion) ? flower.motion! : 0);
+      if (motion < .075) continue;
+      const previous = this.rippleEmissions.get(flower.id) ?? -Infinity;
+      if (time - previous < mix(540, 170, motion)) continue;
+      this.rippleEmissions.set(flower.id, time);
+      this.ripples.push({ id: flower.id, born: time, life: mix(1250, 1900, motion), strength: motion, phase: flower.phase % TAU });
+    }
+    this.ripples = this.ripples.slice(-24);
+    const c = this.ctx;
+    c.save();
+    for (const ripple of this.ripples) {
+      const flower = current.get(ripple.id)!;
+      const age = clamp((time - ripple.born) / ripple.life);
+      const fade = Math.sin(age * Math.PI) * (1 - age) * clamp(flower.opacity);
+      const size = Math.min(radius * clamp(Number.isFinite(flower.scale) ? flower.scale! : 1, .65, 1.8), this.width * .27, this.height * .31, 196);
+      // Rings always follow the current hand. No old fingertip positions or
+      // persistent paint strokes are retained in the animation state.
+      const x = clamp(flower.x) * this.width;
+      const y = clamp(flower.y) * this.height + size * .24;
+      for (let ring = 0; ring < 3; ring++) {
+        const rr = size * (.42 + age * (1.5 + ripple.strength * .65) + ring * .16);
+        c.beginPath();
+        c.ellipse(x, y + ring * size * .024, rr, rr * .29, -.025, ripple.phase + ring * .35, ripple.phase + ring * .35 + TAU * .91);
+        c.strokeStyle = `rgba(60,92,85,${fade * (.17 - ring * .035) * (.48 + ripple.strength * .52)})`;
+        c.lineWidth = .65 + ripple.strength * .7;
+        c.stroke();
+      }
+    }
+    c.restore();
+  }
 
   private getAnatomy(phase: number, type: FlowerType): Anatomy {
     const seed = seedFor(phase, type);
@@ -167,26 +236,9 @@ export class InkGardenRenderer {
       c.quadraticCurveTo(x + length * 0.42, y - rand() * 0.8, x + length, y + (rand() - 0.5) * 1.5);
       c.stroke();
     }
-    // Very distant ink landscape remains below the active white space.
-    const baseline = h * 0.982;
-    for (let layer = 0; layer < 3; layer++) {
-      const startY = h * (0.89 + layer * 0.025);
-      c.beginPath();
-      c.moveTo(-20, baseline);
-      c.lineTo(-20, startY + h * 0.03);
-      for (let x = -20; x < w + 80; x += w / 8) {
-        const rise = (0.018 + rand() * 0.055) * h * (1 - layer * 0.19);
-        c.bezierCurveTo(x + w * 0.035, startY + rise * 0.35, x + w * 0.075, startY - rise, x + w * 0.125, startY + rise * 0.3);
-      }
-      c.lineTo(w + 100, h + 10);
-      c.lineTo(-20, h + 10);
-      const mountain = c.createLinearGradient(0, startY - h * 0.07, 0, h);
-      mountain.addColorStop(0, `rgba(83,103,94,${0.022 + layer * 0.009})`);
-      mountain.addColorStop(1, 'rgba(111,126,106,0)');
-      c.fillStyle = mountain;
-      c.fill();
-    }
+    if (this.landscape !== 'none') paintLandscape(c, w, h, this.landscape);
     this.paintSeal(c, w, h);
+    this.paperReady = true;
   }
 
   private paintSeal(c: CanvasRenderingContext2D, w: number, h: number): void {
@@ -438,6 +490,8 @@ export class InkGardenRenderer {
   private peony(r: number, o: number, a: Anatomy): void {
     const c = this.ctx;
     const side = grain(a, 0) > 0.5 ? 1 : -1;
+    c.save();
+    c.rotate(this.branchSway);
     this.curvedStalk(r * 0.17 * side, r * 2.15, r, 0.7);
     this.stalk([[r * 0.04, r * 1.15], [-r * 0.4 * side, r * 0.94], [-r * 0.79 * side, r * 0.82]], r * 0.018, 0.58);
     this.stalk([[r * 0.1, r * 1.68], [r * 0.65 * side, r * 1.48]], r * 0.015, 0.6);
@@ -445,6 +499,9 @@ export class InkGardenRenderer {
     this.leaf(-r * 0.65 * side, r * 0.87, r * 0.62, r * 0.31, -1.87 * side, a, 40, true, 0.54);
     this.leaf(r * 0.49 * side, r * 1.53, r * 0.68, r * 0.37, 1.1 * side, a, 50, true, 0.7);
     this.leaf(r * 0.26 * side, r * 1.63, r * 0.57, r * 0.29, 0.45 * side, a, 60, true, 0.5);
+    c.restore();
+    c.save();
+    c.rotate(this.headRotation);
     this.calyx(r, o, a);
     const size = r * mix(0.32, 1, o);
     const rotation = (grain(a, 3) - 0.5) * 0.55;
@@ -476,6 +533,7 @@ export class InkGardenRenderer {
       this.stamens(size * 0.14, 19, a, 0.92);
       c.restore();
     }
+    c.restore();
     c.restore();
   }
 
@@ -529,10 +587,16 @@ export class InkGardenRenderer {
   }
 
   private lotus(r: number, o: number, a: Anatomy): void {
+    const c = this.ctx;
     const side = grain(a, 4) > 0.5 ? 1 : -1;
+    c.save();
+    c.rotate(this.branchSway);
     this.curvedStalk(r * 0.14 * side, r * 2.45, r, 0.63);
     this.stalk([[r * 0.82 * side, r * 1.56], [r * 0.65 * side, r * 2.12], [r * 0.36 * side, r * 2.48]], r * 0.02, 0.46, LEAF);
     this.lotusLeaf(r * 0.9 * side, r * 1.48, r * 0.98, a);
+    c.restore();
+    c.save();
+    c.rotate(this.headRotation);
     const size = r * mix(0.43, 1, o);
     this.calyx(size, o, a);
     const spread = mix(0.13, 1, o);
@@ -551,7 +615,7 @@ export class InkGardenRenderer {
       this.stamens(size * 0.2, 27, a, 0.87, [186, 137, 43]);
       c.fillStyle = 'rgba(140,136,61,.75)';
       c.beginPath();
-      c.ellipse(0, size * 0.025, size * 0.105, size * 0.055, 0, 0, TAU);
+      c.ellipse(0, 0, size * 0.105, size * 0.055, 0, 0, TAU);
       c.fill();
       c.restore();
     }
@@ -559,6 +623,7 @@ export class InkGardenRenderer {
       const angle = (i - 1) * mix(0.15, 0.68, o);
       this.petal((i - 1) * size * 0.12 * o, size * 0.22, size * mix(0.71, 0.62, o), size * mix(0.24, 0.61, o), angle, LOTUS, a, 550 + i * 12, true, 0.7, (i - 1) * 0.08);
     }
+    c.restore();
   }
 
   private plumBlossom(x: number, y: number, r: number, o: number, a: Anatomy, offset: number): void {
@@ -579,12 +644,14 @@ export class InkGardenRenderer {
   }
 
   private plum(r: number, o: number, a: Anatomy): void {
+    const c = this.ctx;
     const side = grain(a, 3) > 0.5 ? 1 : -1;
+    c.save();
+    c.rotate(this.branchSway);
     const branch: Point[] = [[0, r * 0.15], [r * 0.13 * side, r * 0.42], [r * 0.39 * side, r * 0.84], [r * 0.33 * side, r * 1.19], [r * 0.74 * side, r * 1.75], [r * 0.88 * side, r * 2.35]];
     this.stalk(branch, r * 0.063, 0.81, [54, 48, 39]);
     this.stalk([[r * 0.34 * side, r * 1.22], [-r * 0.03 * side, r * 1.12], [-r * 0.34 * side, r * 0.92], [-r * 0.57 * side, r * 0.98]], r * 0.032, 0.72, [57, 49, 40]);
     this.stalk([[r * 0.67 * side, r * 1.68], [r * 1.02 * side, r * 1.32], [r * 1.1 * side, r * 0.94]], r * 0.022, 0.67, [57, 49, 40]);
-    const c = this.ctx;
     // Knots and discontinuous bark marks turn a smooth line into a woody plum twig.
     c.save();
     for (let i = 0; i < 17; i++) {
@@ -599,8 +666,12 @@ export class InkGardenRenderer {
     c.restore();
     this.plumBlossom(-r * 0.53 * side, r * 0.94, r * 0.25, 0.74, a, 170);
     this.plumBlossom(r * 1.1 * side, r * 0.94, r * 0.16, 0.16, a, 260);
+    c.restore();
     // The single main flower is centred exactly on the fingertip.
+    c.save();
+    c.rotate(this.headRotation);
     this.plumBlossom(0, 0, r * 0.78, o, a, 330);
+    c.restore();
   }
 
   private chrysPetal(r: number, width: number, angle: number, curl: number, a: Anatomy, index: number, alpha: number): void {
@@ -634,11 +705,17 @@ export class InkGardenRenderer {
   }
 
   private chrysanthemum(r: number, o: number, a: Anatomy): void {
+    const c = this.ctx;
+    c.save();
+    c.rotate(this.branchSway);
     this.stalk([[0, r * 0.15], [-r * 0.1, r * 0.63], [r * 0.09, r * 1.12], [-r * 0.03, r * 1.57], [r * 0.2, r * 2.19]], r * 0.026, 0.72, LEAF);
     this.stalk([[r * 0.07, r * 1.12], [r * 0.5, r * 1.04]], r * 0.016, 0.59);
     this.leaf(r * 0.44, r * 1.04, r * 0.75, r * 0.43, 1.17, a, 30, true, 0.67);
     this.leaf(-r * 0.05, r * 1.57, r * 0.82, r * 0.47, -1.15, a, 50, true, 0.68);
     this.leaf(r * 0.06, r * 1.88, r * 0.52, r * 0.31, 0.88, a, 70, true, 0.5);
+    c.restore();
+    c.save();
+    c.rotate(this.headRotation);
     this.calyx(r * 0.7, o, a);
     const size = r * mix(0.29, 1, o);
     const rings = [{ n: 29, len: 1, width: 0.082, alpha: 0.7 }, { n: 27, len: 0.79, width: 0.095, alpha: 0.77 }, { n: 21, len: 0.55, width: 0.106, alpha: 0.83 }, { n: 15, len: 0.3, width: 0.11, alpha: 0.86 }];
@@ -653,6 +730,7 @@ export class InkGardenRenderer {
       }
     }
     this.stamens(size * 0.12, 21, a, 0.86, [140, 104, 37]);
+    c.restore();
   }
 
   private orchidBlade(baseX: number, baseY: number, tipX: number, tipY: number, bend: number, width: number, alpha: number): void {
@@ -680,6 +758,8 @@ export class InkGardenRenderer {
 
   private orchid(r: number, o: number, a: Anatomy): void {
     const c = this.ctx;
+    c.save();
+    c.rotate(this.branchSway);
     const baseY = r * 2.26;
     const side = grain(a, 8) > 0.5 ? 1 : -1;
     // Chinese ink orchids are recognized by their long, crossing, tapered leaves.
@@ -691,6 +771,9 @@ export class InkGardenRenderer {
     this.curvedStalk(r * 0.04, baseY, r, 0.66);
     this.stalk([[r * 0.02, r * 0.95], [r * 0.41 * side, r * 0.62], [r * 0.5 * side, r * 0.37]], r * 0.012, 0.54, LEAF);
     this.petal(r * 0.5 * side, r * 0.39, r * 0.26, r * 0.11, side * 0.3, ORCHID, a, 80, true, 0.58);
+    c.restore();
+    c.save();
+    c.rotate(this.headRotation);
     const size = r * mix(0.33, 0.91, o);
     const spread = mix(0.21, 1, o);
     // Three long sepals, two softer petals, and a small freckled lip.
@@ -713,8 +796,9 @@ export class InkGardenRenderer {
     }
     c.fillStyle = 'rgba(183,145,57,.82)';
     c.beginPath();
-    c.ellipse(0, size * 0.005, size * 0.05, size * 0.075, 0, 0, TAU);
+    c.ellipse(0, 0, size * 0.05, size * 0.075, 0, 0, TAU);
     c.fill();
+    c.restore();
     c.restore();
   }
 }

@@ -27,6 +27,12 @@ export interface FlowerState {
   flower: FlowerType;
   opacity: number;
   phase: number;
+  /** Per-hand relative size, in 0.65–1.8; absent means 1. */
+  scale?: number;
+  /** Mirrored in-plane rotation in radians; absent means 0. */
+  rotation?: number;
+  /** Smoothed movement intensity, in 0–1; absent means 0. */
+  motion?: number;
 }
 
 export interface TrackedHand extends FlowerState {
