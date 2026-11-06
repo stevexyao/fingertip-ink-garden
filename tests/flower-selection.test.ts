@@ -10,7 +10,7 @@ const observation = (side: 'Left' | 'Right', x: number): HandObservation => ({
   handedness: side, confidence: .99,
 });
 
-test('returning hands retain their latest gesture-selected flower rather than an old manual choice', () => {
+test('returning hands retain their latest explicitly selected flower rather than an old manual choice', () => {
   const tracker = new HandGestureTracker();
   const slots = new HandSlots();
   const pending: (FlowerType | null)[] = [null, null];
@@ -27,7 +27,7 @@ test('returning hands retain their latest gesture-selected flower rather than an
   assert.equal(displayed[0], 'lotus');
 });
 
-test('a flower chosen while no hand is visible is applied once and does not undo later swipes', () => {
+test('a flower chosen while no hand is visible is applied once and does not undo later selections', () => {
   const tracker = new HandGestureTracker();
   const slots = new HandSlots();
   const pending: (FlowerType | null)[] = ['plum', null];

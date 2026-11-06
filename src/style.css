@@ -116,6 +116,38 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .toast { position: fixed; left: 50%; bottom: calc(30px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px); background: #3d493bea; color: #fff8ea; padding: 13px 23px; font-size: 12px; letter-spacing: 1px; max-width: calc(100vw - 36px); text-align: center; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 200; line-height: 1.8; }
 .toast.visible { opacity: 1; transform: translate(-50%, 0); }
 
+.dwell-toolbar { position: absolute; z-index: 4; left: 14px; right: 14px; bottom: 14px; max-width: 610px; margin: 0 auto; padding: 10px; border: 1px solid #b8bba6; background: #f8f4e9f5; box-shadow: 0 2px 14px #39412d0a; }
+.dwell-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 10px; color: #70785f; margin-bottom: 8px; line-height: 1.5; }
+.dwell-heading b { font-weight: 500; color: var(--cinnabar); }
+.dwell-heading small { font-size: 9px; color: #8b8d79; }
+.dwell-options { display: grid; grid-template-columns: repeat(5, minmax(44px, 1fr)); gap: 7px; }
+.dwell-flower { position: relative; min-width: 44px; min-height: 52px; padding: 5px 2px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 1px solid #d9d7c7; background: #f5f1e6; font: 13px 'Noto Serif SC', 'Songti SC', serif; }
+.dwell-petal { color: var(--petal-color); font: 20px/1 Georgia, serif; }
+.dwell-flower.active { background: #ebeede; border-color: #a4ad8c; }
+.dwell-flower:hover { background: #eeeadd; }
+.dwell-flower.hover-one { box-shadow: inset 0 0 0 2px #9e4638; }
+.dwell-flower.hover-two { outline: 2px solid #667e66; outline-offset: 1px; }
+.hand-pointers { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+.hand-pointer { --pointer-color: #9e4638; --progress: 0; position: absolute; width: 44px; height: 44px; transform: translate(-50%, -50%); color: var(--pointer-color); }
+.pointer-1 { --pointer-color: #53765d; }
+.hand-pointer svg { position: absolute; inset: 0; width: 44px; height: 44px; transform: rotate(-90deg); overflow: visible; }
+.hand-pointer circle { fill: none; stroke-width: 2.5; }
+.pointer-track { stroke: #fff8e8; opacity: .85; }
+.pointer-progress { stroke: var(--pointer-color); stroke-dasharray: var(--progress) 100; stroke-linecap: round; }
+.hand-pointer > span { position: absolute; inset: 12px; display: grid; place-items: center; border-radius: 50%; background: #fffaf0; box-shadow: 0 0 0 1px var(--pointer-color); font: 11px 'Noto Serif SC', serif; }
+.hand-pointer:not(.on-target) .pointer-track { opacity: .35; }
+.painting.is-camera .painting-corner { display: none; }
+.painting.is-camera .camera-preview { top: 16px; bottom: auto; z-index: 3; }
+.painting.is-camera .preview-reopen { top: 16px; bottom: auto; z-index: 3; }
+.painting.is-camera .exit-immersive { top: 16px; left: 16px; right: auto; z-index: 6; }
+@media (max-width: 680px) {
+  .dwell-toolbar { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); padding: 8px; }
+  .dwell-heading { font-size: 9px; gap: 4px; }
+  .dwell-heading small { font-size: 8px; }
+  .dwell-options { gap: 5px; }
+  .dwell-flower { min-height: 50px; font-size: 12px; }
+}
+
 @media (min-width: 1600px) { .painting { height: 620px; } .workspace { gap: 48px; grid-template-columns: minmax(0, 1fr) 280px; } }
 @media (max-width: 1150px) { .atelier { padding: 0 34px; } .workspace { gap: 26px; grid-template-columns: minmax(0, 1fr) 235px; } .painting { height: 480px; } .panel-intro h1 { font-size: 30px; } .flower-library { gap: 20px; } .library-label { width: 125px; } .flower-options { gap: 7px; } }
 @media (max-width: 900px) { .atelier { padding: 0 24px; } .masthead { height: 95px; } .masthead-poem { display: none; } .workspace { grid-template-columns: minmax(0, 1fr) 218px; gap: 20px; padding-top: 21px; } .panel-intro h1 { font-size: 27px; margin-top: 12px; } .panel-intro p { font-size: 10px; margin-bottom: 19px; } .painting-inscription { left: 19px; top: 27px; gap: 6px; } .painting-inscription > span { font-size: 22px; } .painting-inscription > span:first-child { font-size: 26px; } .painting { height: 495px; } .gesture-guide li { gap: 9px; } .flower-library { gap: 16px; } .library-label { width: 112px; } .flower-thumb { height: 65px; } .flower-name { font-size: 14px; } .camera-preview { width: 150px; } .canvas-tools p { max-width: 225px; font-size: 9px; } .canvas-tools > div { gap: 14px; } }

@@ -5,6 +5,7 @@ import { HandGestureTracker } from './gestures';
 import { HandSlots } from './hand-slots';
 import { synchronizeFlowerSelection } from './flower-selection';
 import { HandCamera, type CameraStatus } from './camera';
+import { DwellFlowerSelector, type DwellTarget } from './dwell-selector';
 
 const icon = (name: string) => {
   const paths: Record<string, string> = {
@@ -40,10 +41,15 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <div class="preview-image"><video id="webcam" playsinline muted autoplay></video><canvas id="skeleton" aria-label="21个手部关键点"></canvas><span class="preview-badge">21 点 · 镜像</span></div>
           </div>
           <button class="preview-reopen" id="preview-reopen" hidden title="展开摄像头预览" aria-label="展开摄像头预览">${icon('camera')}</button>
+          <div class="dwell-toolbar" id="dwell-toolbar" hidden aria-label="指尖停留选花">
+            <div class="dwell-heading"><span>指尖停留 <b>0.8 秒</b>，选一枝花</span><small id="dwell-click-target">点按为第一朵选花</small></div>
+            <div class="dwell-options">${FLOWERS.map(flower => `<button class="dwell-flower" data-dwell-flower="${flower.type}" data-flower="${flower.type}" aria-pressed="false"><span class="dwell-petal" style="--petal-color:${flower.color}" aria-hidden="true">✿</span><span>${flower.name}</span></button>`).join('')}</div>
+          </div>
+          <div class="hand-pointers" id="hand-pointers" hidden aria-hidden="true">${[0, 1].map(i => `<div class="hand-pointer pointer-${i}" data-hand-pointer="${i}" hidden><svg viewBox="0 0 44 44"><circle class="pointer-track" cx="22" cy="22" r="18"/><circle class="pointer-progress" cx="22" cy="22" r="18" pathLength="100"/></svg><span>${i === 0 ? '一' : '二'}</span></div>`).join('')}</div>
           <button class="exit-immersive" id="exit-immersive" hidden>${icon('close')}退出沉浸</button>
         </div>
         <div class="canvas-tools">
-          <p id="canvas-help">张开手掌，花朵绽放；停稳后左右挥动，切换各自花型。</p>
+          <p id="canvas-help">移指随行，张合开花；指向底部花牌，停留 0.8 秒选花。</p>
           <div><button class="text-tool" id="fullscreen">${icon('expand')}<span>沉浸</span></button><button class="text-tool" id="save-art">${icon('download')}<span>存画</span></button></div>
         </div>
       </div>
@@ -57,7 +63,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <div class="hand-slots"><button class="hand-slot selected" data-slot="0" aria-pressed="true"><span class="slot-dot"></span><span><b>第一朵</b><small id="slot-name-0">牡丹 · 预览</small></span><span class="slot-meter"><i id="slot-meter-0"></i></span></button><button class="hand-slot" data-slot="1" aria-pressed="false"><span class="slot-dot"></span><span><b>第二朵</b><small id="slot-name-1">荷花 · 预览</small></span><span class="slot-meter"><i id="slot-meter-1"></i></span></button></div>
         </div>
         <div class="demo-controls" id="demo-controls" hidden><label for="bloom-range">花开几分 <output id="bloom-value">80%</output></label><input id="bloom-range" type="range" min="0" max="100" value="80"/><small>拖动画布移动花朵，滑动调节开合。</small></div>
-        <div class="gesture-guide"><div class="section-label"><span>三式入门</span><span>随手，即成画</span></div><ol><li><span class="gesture-number">一</span><div><b>移手 · 花随指行</b><p>食指所至，花朵相随</p></div></li><li><span class="gesture-number">二</span><div><b>张合 · 花开有度</b><p>收拢成苞，舒掌盛放</p></div></li><li><span class="gesture-number">三</span><div><b>挥手 · 换一种花</b><p>舒掌停稳后左右挥动，各换各的花</p></div></li></ol></div>
+        <div class="gesture-guide"><div class="section-label"><span>三式入门</span><span>随手，即成画</span></div><ol><li><span class="gesture-number">一</span><div><b>移指 · 花随指行</b><p>食指所至，花朵相随</p></div></li><li><span class="gesture-number">二</span><div><b>张合 · 花开有度</b><p>收拢成苞，舒掌盛放</p></div></li><li><span class="gesture-number">三</span><div><b>停留 · 择花入画</b><p>指向画布底部花牌，停留 0.8 秒</p></div></li></ol></div>
       </aside>
     </section>
 
@@ -78,6 +84,9 @@ const skeleton = $<HTMLCanvasElement>('#skeleton');
 const renderer = new InkGardenRenderer(art);
 const tracker = new HandGestureTracker();
 const handSlots = new HandSlots();
+const dwell = new DwellFlowerSelector();
+let dwellFrame: ReturnType<DwellFlowerSelector['update']> = { progress: [], selections: [] };
+let pointerHands: TrackedHand[] = [];
 let mode: 'gallery' | 'demo' | 'camera' = 'gallery';
 let cameraPhase: CameraStatus['phase'] = 'idle';
 let selectedSlot = 0;
@@ -104,8 +113,12 @@ function toast(message: string) {
 }
 
 function setMode(next: typeof mode) {
+  if (next !== mode) resetDwell();
   mode = next;
   painting.classList.toggle('is-demo', next === 'demo');
+  painting.classList.toggle('is-camera', next === 'camera');
+  $('#dwell-toolbar').hidden = next !== 'camera';
+  $('#hand-pointers').hidden = next !== 'camera';
   $('#demo-controls').hidden = next !== 'demo';
   $('#demo-button').textContent = next === 'demo' ? '正在赏花体验' : next === 'camera' ? '切换到赏花体验 ↗' : '先体验一下 ↗';
   $('#live-state').innerHTML = `<i></i>${cameraPhase === 'loading' ? '正在准备' : next === 'camera' ? '手势入画' : next === 'demo' ? '赏花体验' : '赏花预览'}`;
@@ -125,8 +138,47 @@ function currentSlots(now = performance.now()): (FlowerState | undefined)[] {
 function resize() {
   const { width, height } = painting.getBoundingClientRect();
   renderer.resize(width, height, Math.min(window.devicePixelRatio || 1, 2));
+  resetDwell();
 }
 new ResizeObserver(resize).observe(painting);
+
+function resetDwell() {
+  dwell.clear();
+  dwellFrame = { progress: [], selections: [] };
+  pointerHands = [];
+  drawDwellPointers(performance.now());
+}
+
+function dwellTargets(): DwellTarget[] {
+  if ($('#dwell-toolbar').hidden) return [];
+  const canvas = art.getBoundingClientRect();
+  if (!canvas.width || !canvas.height) return [];
+  return [...document.querySelectorAll<HTMLButtonElement>('[data-dwell-flower]')].map(button => {
+    const box = button.getBoundingClientRect();
+    return { flower: button.dataset.dwellFlower as FlowerType,
+      left: (box.left - canvas.left) / canvas.width, right: (box.right - canvas.left) / canvas.width,
+      top: (box.top - canvas.top) / canvas.height, bottom: (box.bottom - canvas.top) / canvas.height };
+  });
+}
+
+function drawDwellPointers(now: number) {
+  const fresh = mode === 'camera' && now - latestDetectionAt <= 400;
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-dwell-flower]')) {
+    button.classList.remove('hover-one', 'hover-two');
+  }
+  document.querySelectorAll<HTMLElement>('[data-hand-pointer]').forEach((element, index) => {
+    const hand = pointerHands.find(h => h.id === handSlots.ids[index]);
+    element.hidden = !fresh || !hand;
+    if (!fresh || !hand) return;
+    const state = dwellFrame.progress.find(p => p.id === hand.id);
+    element.style.left = `${hand.x * 100}%`;
+    element.style.top = `${hand.y * 100}%`;
+    element.style.setProperty('--progress', String((state?.progress ?? 0) * 100));
+    element.dataset.dwellProgress = String(state?.progress ?? 0);
+    element.classList.toggle('on-target', Boolean(state?.target));
+    if (state?.target) document.querySelector(`[data-dwell-flower="${state.target}"]`)?.classList.add(index === 0 ? 'hover-one' : 'hover-two');
+  });
+}
 
 function updateUi(now: number) {
   const flowers = currentSlots(now);
@@ -137,7 +189,7 @@ function updateUi(now: number) {
   $('#inscription').classList.toggle('quiet', mode === 'camera');
   $('#canvas-mode').textContent = mode === 'camera' ? '写意 · 手势入画' : mode === 'demo' ? '写意 · 赏花体验' : '写意 · 赏花';
   $('#canvas-caption').textContent = mode === 'camera' ? (visible.length ? visible.map(h => FLOWERS.find(f => f.type === h.flower)!.name).join(' · ') : '静候花开') : mode === 'demo' ? '拖动画布 · 调节花开几分' : demoFlowers.map(f => FLOWERS.find(entry => entry.type === f.flower)!.name).join('与') + ' · 浓淡相宜';
-  $('#canvas-help').textContent = mode === 'demo' ? '拖动画布移动选中的花，用右侧滑杆调节开合。' : '张开手掌，花朵绽放；停稳后左右挥动，切换各自花型。';
+  $('#canvas-help').textContent = mode === 'demo' ? '拖动画布移动选中的花，用右侧滑杆调节开合。' : '移指随行，张合开花；指向底部花牌，停留 0.8 秒选花。';
   const slots = document.querySelectorAll<HTMLButtonElement>('.hand-slot');
   const changedFlowers: string[] = [];
   slots.forEach((button, index) => {
@@ -150,7 +202,7 @@ function updateUi(now: number) {
     $(`#slot-meter-${index}`).style.width = `${hand ? Math.round(hand.openness * 100) : 0}%`;
     if (mode === 'camera' && hand) {
       const previous = flowerMemory.get(hand.id);
-      if (previous && previous !== hand.flower) changedFlowers.push(`第${index === 0 ? '一' : '二'}朵 · ${FLOWERS.find(f => f.type === hand.flower)!.name}`);
+      if (previous && previous !== hand.flower) changedFlowers.push(`第${index === 0 ? '一' : '二'}朵已换为${FLOWERS.find(f => f.type === hand.flower)!.name}`);
       flowerMemory.set(hand.id, hand.flower);
     }
   });
@@ -162,16 +214,34 @@ function updateUi(now: number) {
     button.setAttribute('aria-pressed', String(active));
   });
   $('#palette-target').textContent = `为第${selectedSlot === 0 ? '一' : '二'}朵选花`;
+  $('#dwell-click-target').textContent = `点按为第${selectedSlot === 0 ? '一' : '二'}朵选花`;
 }
 
 const camera = new HandCamera(video, (observations, capturedAt, receivedAt) => {
   latestObservations = observations;
   latestDetectionAt = receivedAt;
   const hands = tracker.update(observations, capturedAt, receivedAt);
+  for (const hand of hands) {
+    const slot = handSlots.indexOf(hand.id);
+    if (slot >= 0 && pendingFlowers[slot]) dwell.cancel(hand.id);
+  }
   synchronizeFlowerSelection(tracker, handSlots, hands, pendingFlowers, displayedFlowers);
+  // Retained fading hands are not observations and cannot advance selection.
+  pointerHands = hands.filter(hand => hand.lastSeen === receivedAt);
+  if (cameraPhase === 'running') {
+    dwellFrame = dwell.update(pointerHands, dwellTargets(), capturedAt, receivedAt);
+    for (const selection of dwellFrame.selections) {
+      tracker.setFlower(selection.id, selection.flower, receivedAt);
+      const hand = hands.find(candidate => candidate.id === selection.id);
+      if (hand) hand.flower = selection.flower;
+      const slot = handSlots.indexOf(selection.id);
+      if (slot >= 0) displayedFlowers[slot] = selection.flower;
+    }
+  } else resetDwell();
   hands.forEach(hand => {
     if (!flowerMemory.has(hand.id)) flowerMemory.set(hand.id, hand.flower);
   });
+  drawDwellPointers(receivedAt);
 }, status => {
   cameraPhase = status.phase;
   const startButton = $<HTMLButtonElement>('#start-camera');
@@ -193,6 +263,7 @@ const camera = new HandCamera(video, (observations, capturedAt, receivedAt) => {
     $('#camera-preview').hidden = !showPreview || previewCollapsed;
     $('#preview-reopen').hidden = !showPreview || !previewCollapsed;
   }
+  if (status.phase === 'idle' || status.phase === 'error') resetDwell();
   if (status.fps) $('#preview-label').textContent = `手部追踪 · ${status.fps} 帧/秒`;
   updateUi(performance.now());
 });
@@ -243,11 +314,11 @@ document.querySelectorAll<HTMLButtonElement>('[data-flower]').forEach(button => 
   const flower = button.dataset.flower as FlowerType;
   if (mode === 'camera') {
     const hand = currentSlots(performance.now())[selectedSlot];
-    if (hand) tracker.setFlower(hand.id, flower, performance.now());
+    if (hand) { dwell.cancel(hand.id); tracker.setFlower(hand.id, flower, performance.now()); }
     else {
       pendingFlowers[selectedSlot] = flower;
       const retainedId = handSlots.ids[selectedSlot];
-      if (retainedId) tracker.setFlower(retainedId, flower, performance.now());
+      if (retainedId) { dwell.cancel(retainedId); tracker.setFlower(retainedId, flower, performance.now()); }
     }
     displayedFlowers[selectedSlot] = flower;
     if (!hand) toast('已选好花型，手掌入镜后即可绽放');
@@ -364,6 +435,7 @@ function animate(now: number) {
   if (now - lastPaintAt >= (mode === 'gallery' ? 1000 / 15 : 1000 / 30)) {
     renderer.render(currentFlowers(now), now);
     drawPreview(now);
+    drawDwellPointers(now);
     lastPaintAt = now;
   }
   if (now - lastUiUpdate > 120) { updateUi(now); lastUiUpdate = now; }
