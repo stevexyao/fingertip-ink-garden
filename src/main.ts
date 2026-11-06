@@ -58,7 +58,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <section class="ambience" aria-label="风景与音乐">
           <div class="ambience-heading"><span class="eyebrow">一 景 一 韵</span><span id="scene-description">水榭听雨，远山入画</span></div>
           <div class="landscape-options" role="group" aria-label="选择国画风景">${LANDSCAPES.map(scene => `<button type="button" data-landscape="${scene.type}" aria-pressed="false"><span class="landscape-mark scene-${scene.type}" aria-hidden="true"></span><span>${scene.name}</span></button>`).join('')}</div>
-          <div class="music-line"><div><b>国风器乐 · 随手入韵</b><small id="music-status" role="status" aria-live="polite">轻触开启，听一曲花间清音</small></div><div class="music-controls"><button type="button" data-music-toggle aria-pressed="false">♫ 开启音乐</button><label class="volume-control"><span>音量 <output id="music-volume-value">30%</output></span><input data-music-volume type="range" min="0" max="100" value="30" aria-label="音乐音量"/></label><button type="button" class="mute-button" data-music-mute aria-label="静音音乐" aria-pressed="false">静音</button></div></div>
+          <div class="music-line"><div><b id="music-theme">国风器乐 · 随手入韵</b><small id="music-status" role="status" aria-live="polite">轻触开启，听一曲花间清音</small></div><div class="music-controls"><button type="button" data-music-toggle aria-pressed="false">♫ 开启音乐</button><label class="volume-control"><span>音量 <output id="music-volume-value">30%</output></span><input data-music-volume type="range" min="0" max="100" value="30" aria-label="音乐音量"/></label><button type="button" class="mute-button" data-music-mute aria-label="静音音乐" aria-pressed="false">静音</button></div></div>
         </section>
       </div>
 
@@ -114,6 +114,7 @@ const demoFlowers: FlowerState[] = [
 const flowerMemory = new Map<string, FlowerType>();
 const displayedFlowers: (FlowerType | null)[] = [null, null];
 const pendingFlowers: (FlowerType | null)[] = [null, null];
+let musicFlowers: [FlowerType, FlowerType] = [demoFlowers[0]!.flower, demoFlowers[1]!.flower];
 let musicPlaying = false;
 let musicVolume = 0.3;
 let lastAudibleVolume = 0.3;
@@ -129,7 +130,9 @@ const music = new GardenMusic(status => {
   document.querySelectorAll<HTMLButtonElement>('[data-music-toggle]').forEach(button => {
     button.textContent = status.playing ? 'Ⅱ 暂停音乐' : '♫ 开启音乐';
     button.setAttribute('aria-pressed', String(status.playing));
+    button.title = status.message;
   });
+  $('#music-theme').textContent = status.sceneName ? `${status.sceneName} · 国风器乐` : '国风器乐 · 随手入韵';
   $('#music-status').textContent = status.message;
 });
 
@@ -157,6 +160,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-music-mute]').forEach(button
 function selectLandscape(type: LandscapeType) {
   landscape = type;
   renderer.setLandscape(type);
+  music.setScene(type);
   const scene = LANDSCAPES.find(candidate => candidate.type === type)!;
   $('#scene-description').textContent = scene.note;
   document.querySelectorAll<HTMLButtonElement>('[data-landscape]').forEach(button => { button.setAttribute('aria-pressed', String(button.dataset.landscape === type)); });
@@ -194,6 +198,15 @@ function currentSlots(now = performance.now()): (FlowerState | undefined)[] {
   if (mode !== 'camera') return demoFlowers;
   const hands = tracker.getHands(now);
   return handSlots.ids.map(id => hands.find(hand => hand.id === id));
+}
+
+function synchronizeMusicFlowers(flowers: (FlowerState | undefined)[]) {
+  // Preserve both voice slots through missing hands; pending choices configure
+  // sound immediately and retained hands never move the second voice into first.
+  musicFlowers = musicFlowers.map((previous, index) => mode === 'camera'
+    ? pendingFlowers[index] ?? flowers[index]?.flower ?? displayedFlowers[index] ?? previous
+    : demoFlowers[index]!.flower) as [FlowerType, FlowerType];
+  music.setFlowers([...musicFlowers]);
 }
 
 function resize() {
@@ -241,8 +254,9 @@ function drawDwellPointers(now: number) {
   });
 }
 
-function updateUi(now: number) {
+function updateUi(now: number, explicitFlowerSelection = false) {
   const flowers = currentSlots(now);
+  synchronizeMusicFlowers(flowers);
   const tracked = mode === 'camera' ? flowers.filter(Boolean) as TrackedHand[] : [];
   const visible = tracked.filter(h => now - h.lastSeen < 220);
   $('#hand-count').textContent = mode === 'camera' ? `${visible.length} / 2 只手` : mode === 'demo' ? '赏花体验' : '0 / 2 只手';
@@ -271,7 +285,7 @@ function updateUi(now: number) {
     }
   });
   if (changedFlowers.length) toast(changedFlowers.join('，'));
-  if (changedFlowers.length) music.flowerSelected();
+  if (changedFlowers.length || explicitFlowerSelection) music.flowerSelected();
   const chosen = flowers[selectedSlot]?.flower ?? pendingFlowers[selectedSlot] ?? displayedFlowers[selectedSlot] ?? 'peony';
   document.querySelectorAll<HTMLButtonElement>('[data-flower]').forEach(button => {
     const active = button.dataset.flower === chosen;
@@ -380,6 +394,10 @@ document.querySelectorAll<HTMLButtonElement>('.hand-slot').forEach(button => but
 
 document.querySelectorAll<HTMLButtonElement>('[data-flower]').forEach(button => button.addEventListener('click', () => {
   const flower = button.dataset.flower as FlowerType;
+  const now = performance.now();
+  const previous = mode === 'camera'
+    ? pendingFlowers[selectedSlot] ?? currentSlots(now)[selectedSlot]?.flower ?? displayedFlowers[selectedSlot] ?? musicFlowers[selectedSlot]
+    : demoFlowers[selectedSlot].flower;
   if (mode === 'camera') {
     const hand = currentSlots(performance.now())[selectedSlot];
     if (hand) { dwell.cancel(hand.id); tracker.setFlower(hand.id, flower, performance.now()); }
@@ -390,8 +408,8 @@ document.querySelectorAll<HTMLButtonElement>('[data-flower]').forEach(button => 
     }
     displayedFlowers[selectedSlot] = flower;
     if (!hand) toast('已选好花型，手掌入镜后即可绽放');
-  } else { demoFlowers[selectedSlot].flower = flower; music.flowerSelected(); }
-  updateUi(performance.now());
+  } else demoFlowers[selectedSlot].flower = flower;
+  updateUi(performance.now(), previous !== flower);
 }));
 
 $<HTMLInputElement>('#bloom-range').addEventListener('input', event => {

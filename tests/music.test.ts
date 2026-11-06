@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as musicApi from '../src/music';
 import { GardenMusic, gestureMusicFrame, pentatonicMidi, scoreStep } from '../src/music';
 
 const hand = (motion = .6, x = .2, openness = .8) => ({ id: 'one', x, y: .4, openness, motion });
@@ -162,4 +163,99 @@ test('an audio startup failure can be retried and the failed context is closed',
     assert.equal(Context.created.length, 2);
     assert.equal(Context.created[1]!.state, 'running');
   } finally { music.dispose(); }
+}));
+
+
+test('landscapes have four distinct sustained scores and their intended tempos', () => {
+  const scenes = ['mountains', 'waterside', 'bamboo', 'moonlake'] as const;
+  const scores = scenes.map(scene => JSON.stringify(Array.from({ length: 128 }, (_, step) => scoreStep(step, scene))));
+  assert.equal(new Set(scores).size, 4, 'each landscape needs its own melody and accompaniment, not only a cue');
+  assert.ok(musicApi.MUSIC_THEMES, 'scene registry is available to the interface and renderer QA');
+  assert.deepEqual(scenes.map(scene => musicApi.MUSIC_THEMES[scene].bpm), [62, 68, 74, 60]);
+});
+
+test('five flowers have five different sustained melodic voices', () => {
+  assert.ok(musicApi.FLOWER_VOICES, 'flower voices must affect the continuing melody');
+  const profiles = Object.values(musicApi.FLOWER_VOICES);
+  assert.equal(profiles.length, 5);
+  assert.equal(new Set(profiles.map(profile => JSON.stringify([profile.instrument, profile.register, profile.articulation]))).size, 5);
+});
+
+test('scene and flower choices are saved while paused without enabling audio', () => {
+  const statuses: musicApi.MusicStatus[] = [];
+  const music = new GardenMusic(status => statuses.push(status));
+  try {
+    assert.equal(typeof music.setScene, 'function');
+    assert.equal(typeof music.setFlowers, 'function');
+    music.setScene('bamboo'); music.setFlowers(['plum', 'orchid']);
+    assert.equal(statuses.at(-1)!.playing, false);
+    assert.equal(statuses.at(-1)!.scene, 'bamboo');
+    assert.deepEqual(statuses.at(-1)!.flowerNames, ['梅花', '兰花']);
+    assert.equal(music.getVolume(), .3);
+  } finally { music.dispose(); }
+});
+
+test('identical configurations are idempotent and empty observations retain the last voices', () => {
+  const statuses: musicApi.MusicStatus[] = [];
+  const music = new GardenMusic(status => statuses.push(status));
+  try {
+    assert.equal(typeof music.setScene, 'function');
+    music.setScene('moonlake'); music.setFlowers(['lotus', 'orchid']);
+    const count = statuses.length;
+    music.setScene('moonlake'); music.setFlowers(['lotus', 'orchid']); music.setFlowers([]);
+    assert.equal(statuses.length, count, 'repeated frame notifications cannot restart a phrase');
+    assert.deepEqual(statuses.at(-1)!.flowerNames, ['荷花', '兰花']);
+  } finally { music.dispose(); }
+});
+
+test('theme changes keep one scheduler, two independent voices and user-owned volume', async () => audioTest(async () => {
+  const statuses: musicApi.MusicStatus[] = [];
+  const music = new GardenMusic(status => statuses.push(status));
+  try {
+    assert.equal(typeof music.setScene, 'function');
+    music.setVolume(.62); music.setFlowers(['peony', 'lotus']); await music.start();
+    const context = Context.created[0]!;
+    context.currentTime = .5;
+    music.setFlowers(['peony', 'orchid']); music.setScene('bamboo');
+    assert.deepEqual(statuses.at(-1)!.flowerNames, ['牡丹', '兰花']);
+    assert.equal(statuses.at(-1)!.playing, true);
+    assert.equal(music.getVolume(), .62);
+    assert.equal(Context.created.length, 1, 'scene changes reuse the audio context');
+    music.pause(); music.setScene('moonlake'); music.setFlowers(['plum']);
+    assert.equal(statuses.at(-1)!.playing, false);
+    await music.start();
+    assert.equal(statuses.at(-1)!.scene, 'moonlake');
+    assert.deepEqual(statuses.at(-1)!.flowerNames, ['梅花']);
+  } finally { music.dispose(); }
+}));
+
+test('rapid configuration changes and interrupted resumes never accumulate schedulers or old voices', async () => audioTest(async () => {
+  const originalSet = globalThis.setInterval, originalClear = globalThis.clearInterval;
+  const active = new Set<ReturnType<typeof setInterval>>();
+  globalThis.setInterval = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+    const timer = originalSet(callback, delay, ...args); active.add(timer); return timer;
+  }) as typeof setInterval;
+  globalThis.clearInterval = ((timer: ReturnType<typeof setInterval>) => { active.delete(timer); originalClear(timer); }) as typeof clearInterval;
+  const music = new GardenMusic();
+  try {
+    await music.start(); assert.equal(active.size, 1);
+    const context = Context.created[0]!;
+    const scenes = ['mountains', 'waterside', 'bamboo', 'moonlake'] as const;
+    for (let i = 0; i < 24; i++) {
+      context.currentTime += .01;
+      music.setScene(scenes[i % scenes.length]!);
+      music.setFlowers(i % 2 ? ['plum', 'orchid'] : ['peony', 'lotus']);
+      assert.equal(active.size, 1, 'configuration changes reuse the same scheduler');
+      assert.ok(context.nodes.filter(node => node.startedAt < Infinity && !node.disconnected).length <= 28,
+        'only the active and one fading score retain their voices');
+    }
+    context.state = 'interrupted'; context.onstatechange?.();
+    await music.start(); assert.equal(active.size, 1, 'interruption recovery replaces its scheduler');
+    music.pause(); assert.equal(active.size, 0);
+    music.setScene('bamboo'); music.setFlowers(['plum']); assert.equal(active.size, 0);
+  } finally {
+    music.dispose();
+    assert.equal(active.size, 0);
+    globalThis.setInterval = originalSet; globalThis.clearInterval = originalClear;
+  }
 }));

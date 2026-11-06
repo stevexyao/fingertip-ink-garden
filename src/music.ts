@@ -1,10 +1,27 @@
-/** Original 68 BPM pentatonic score and locally synthesized instruments.
+import type { FlowerType } from './types';
+
+/** Original scene-specific pentatonic scores and locally synthesized instruments.
  * No microphone, remote audio requests or recorded-song dependencies. */
 export interface MusicHand {
   id: string; x: number; y: number; openness: number;
   motion?: number; scale?: number; rotation?: number;
 }
-export interface MusicStatus { enabled: boolean; playing: boolean; volume: number; message: string }
+export type MusicScene = 'mountains' | 'waterside' | 'bamboo' | 'moonlake';
+export interface MusicStatus {
+  enabled: boolean; playing: boolean; volume: number; message: string;
+  scene?: MusicScene; sceneName?: string; flowerNames?: string[]; voiceNames?: string[];
+}
+export interface FlowerVoice {
+  name: string; label: string; instrument: 'warm-string' | 'xiao' | 'harmonic' | 'soft-zither' | 'airy-flute';
+  register: number; articulation: string;
+}
+export const FLOWER_VOICES: Record<FlowerType, FlowerVoice> = {
+  peony: { name: '牡丹', label: '牡丹暖弦', instrument: 'warm-string', register: -12, articulation: 'broad-double-string' },
+  lotus: { name: '荷花', label: '荷花箫声', instrument: 'xiao', register: 0, articulation: 'long-legato' },
+  plum: { name: '梅花', label: '梅花泛音', instrument: 'harmonic', register: 12, articulation: 'crisp-harmonic' },
+  chrysanthemum: { name: '菊花', label: '菊花柔筝', instrument: 'soft-zither', register: -12, articulation: 'soft-low-pluck' },
+  orchid: { name: '兰花', label: '兰花清笛', instrument: 'airy-flute', register: 12, articulation: 'airy-high-legato' },
+};
 export interface GestureMusicFrame {
   activity: number; openness: number; pan: number;
   voices: { note: number; pan: number; activity: number }[];
@@ -38,21 +55,51 @@ const MELODY: readonly (readonly (number | null)[])[] = [
 ];
 const ROOTS = [-10, -6, -8, -10, -10, -6, -8, -10] as const;
 
-export function scoreStep(step: number): ScoreStep {
+export interface MusicTheme {
+  name: string; bpm: number; pluckEvery: number; bassEvery: number;
+  melody: readonly (readonly (number | null)[])[];
+  arpeggio: readonly number[]; reverb: number; wet: number; pluckTone: number; pluckStrength: number;
+}
+const MOUNTAIN_MELODY = [
+  [0,null,null,null,2,null,null,null,1,null,null,null,-1,null,null,null],
+  [2,null,null,null,3,null,null,null,1,null,null,null,0,null,null,null],
+  [3,null,null,null,2,null,null,null,0,null,null,null,-1,null,null,null],
+  [1,null,null,null,0,null,null,null,-1,null,null,null,0,null,null,null],
+];
+const BAMBOO_MELODY = [
+  [2,null,4,3,null,5,4,null,3,null,2,3,null,4,2,null],
+  [4,null,5,6,null,5,3,null,4,null,2,1,null,2,3,null],
+  [5,null,4,3,null,4,2,null,3,null,4,5,null,3,2,null],
+  [3,null,2,1,null,2,0,null,1,null,2,3,null,1,0,null],
+];
+const MOON_MELODY = [
+  [4,null,null,null,null,null,2,null,3,null,null,null,null,null,1,null],
+  [3,null,null,null,null,null,1,null,2,null,null,null,0,null,null,null],
+  [2,null,null,null,null,null,4,null,3,null,null,null,null,null,1,null],
+  [1,null,null,null,null,null,0,null,-1,null,null,null,0,null,null,null],
+];
+export const MUSIC_THEMES: Record<MusicScene, MusicTheme> = {
+  mountains: { name:'云山远岫', bpm:62, pluckEvery:4, bassEvery:16, melody:MOUNTAIN_MELODY, arpeggio:[0,3,5,3], reverb:2.6, wet:.24, pluckTone:1500, pluckStrength:.19 },
+  waterside: { name:'江南水乡', bpm:68, pluckEvery:2, bassEvery:8, melody:MELODY, arpeggio:[0,4,7,4,2,4,7,9], reverb:1.8, wet:.18, pluckTone:2900, pluckStrength:.19 },
+  bamboo: { name:'竹林听风', bpm:74, pluckEvery:1, bassEvery:8, melody:BAMBOO_MELODY, arpeggio:[0,2,4,7,4,2,3,5], reverb:1.2, wet:.12, pluckTone:3900, pluckStrength:.16 },
+  moonlake: { name:'荷塘月色', bpm:60, pluckEvery:4, bassEvery:16, melody:MOON_MELODY, arpeggio:[0,4,2,5], reverb:2.5, wet:.27, pluckTone:1800, pluckStrength:.14 },
+};
+
+export function scoreStep(step: number, scene: MusicScene = 'waterside'): ScoreStep {
   const current = ((Math.floor(Number.isFinite(step) ? step : 0) % 128) + 128) % 128;
-  const phrase = Math.floor(current / 16);
-  const position = current % 16;
-  const melody = MELODY[phrase]![position];
+  const phrase = Math.floor(current / 16), position = current % 16;
+  const theme = MUSIC_THEMES[scene] ?? MUSIC_THEMES.waterside;
+  const row = theme.melody[phrase % theme.melody.length]!;
+  const melody = row[position];
   const root = ROOTS[phrase]!;
-  const arpeggio = [0, 4, 7, 4, 2, 4, 7, 9][Math.floor(position / 2)]!;
-  // Sustained flute notes end before the following note; deliberate rests remain.
+  const arpeggio = theme.arpeggio[Math.floor(position / theme.pluckEvery) % theme.arpeggio.length]!;
   let untilNext = 1;
-  while (position + untilNext < 16 && MELODY[phrase]![position + untilNext] === null) untilNext++;
+  while (position + untilNext < 16 && row[position + untilNext] === null) untilNext++;
   return {
-    bass: position % 8 === 0 ? pentatonicMidi(root) : null,
-    pluck: position % 2 === 0 ? pentatonicMidi(root + arpeggio + 5) : null,
+    bass: position % theme.bassEvery === 0 ? pentatonicMidi(root) : null,
+    pluck: position % theme.pluckEvery === 0 ? pentatonicMidi(root + arpeggio + 5) : null,
     flute: melody === null ? null : pentatonicMidi(melody!),
-    fluteBeats: Math.min(2.8, Math.max(.65, untilNext * .46)),
+    fluteBeats: Math.min(scene === 'moonlake' ? 3.4 : 2.8, Math.max(.65, untilNext * .46)),
   };
 }
 
@@ -83,8 +130,9 @@ class InstrumentRack {
   private readonly strings = new Map<number, AudioBuffer>();
   private readonly voices = new Set<Voice>();
   private readonly fluteWave: PeriodicWave;
+  private breathBuffer: AudioBuffer | null = null;
 
-  constructor(private context: BaseAudioContext, destination: AudioNode, private limitVoices = true) {
+  constructor(private context: BaseAudioContext, destination: AudioNode, private limitVoices = true, scene: MusicScene = 'waterside') {
     this.bus = context.createGain();
     this.colour = context.createBiquadFilter();
     this.colour.type = 'lowpass'; this.colour.frequency.value = 3000; this.colour.Q.value = .45;
@@ -96,8 +144,8 @@ class InstrumentRack {
     compressor.connect(this.master); this.master.connect(destination);
 
     const reverb = context.createConvolver();
-    reverb.buffer = this.impulse();
-    const wet = context.createGain(); wet.gain.value = .18;
+    reverb.buffer = this.impulse(MUSIC_THEMES[scene].reverb);
+    const wet = context.createGain(); wet.gain.value = MUSIC_THEMES[scene].wet;
     this.bus.connect(reverb); reverb.connect(wet); wet.connect(this.colour);
     this.effects = [this.bus, this.colour, compressor, this.master, reverb, wet];
     this.fluteWave = context.createPeriodicWave(new Float32Array(6), new Float32Array([0, 1, .14, .055, .025, .006]));
@@ -108,57 +156,105 @@ class InstrumentRack {
     const parameter = this.master.gain;
     parameter.cancelScheduledValues(now);
     parameter.setValueAtTime(parameter.value, now);
-    parameter.linearRampToValueAtTime(clamp(value) ** 1.25 * .82, now + fade);
+    parameter.linearRampToValueAtTime(clamp(value), now + fade);
   }
 
   colourFor(openness: number): void {
     this.colour.frequency.setTargetAtTime(2200 + clamp(openness) * 2100, this.context.currentTime, .2);
   }
 
-  pluck(note: number, at: number, strength: number, pan = 0): void {
+  pluck(note: number, at: number, strength: number, pan = 0, style: { attack?: number; decay?: number; tone?: number } = {}): void {
     const source = this.context.createBufferSource(); source.buffer = this.string(note);
     const envelope = this.context.createGain();
     envelope.gain.setValueAtTime(0, at);
-    envelope.gain.linearRampToValueAtTime(strength, at + .008);
-    envelope.gain.exponentialRampToValueAtTime(.0001, at + 3.5);
-    source.connect(envelope);
+    envelope.gain.linearRampToValueAtTime(strength, at + (style.attack ?? .008));
+    envelope.gain.exponentialRampToValueAtTime(.0001, at + (style.decay ?? 3.5));
+    const filter = this.context.createBiquadFilter(); filter.type = 'lowpass';
+    filter.frequency.value = style.tone ?? 4200; filter.Q.value = .4;
+    source.connect(filter); filter.connect(envelope);
     const panner = this.pan(envelope, pan);
-    const voice = this.register([source], [envelope, panner]);
-    source.start(at); source.stop(at + 3.6);
+    const voice = this.register([source], [filter, envelope, panner]);
+    source.start(at); source.stop(at + Math.min(3.6, (style.decay ?? 3.5) + .08));
     source.onended = () => this.finish(voice);
   }
 
-  flute(note: number, at: number, duration: number, pan = -.12): void {
+  flute(note: number, at: number, duration: number, pan = -.12, strength = .115, airy = false): void {
     const oscillator = this.context.createOscillator();
-    oscillator.setPeriodicWave(this.fluteWave);
+    if (airy) oscillator.type = 'sine'; else oscillator.setPeriodicWave(this.fluteWave);
     oscillator.frequency.value = midiHz(note);
-    const vibrato = this.context.createOscillator(); vibrato.frequency.value = 4.7;
-    const depth = this.context.createGain(); depth.gain.value = 5;
+    const vibrato = this.context.createOscillator(); vibrato.frequency.value = airy ? 5.3 : 4.7;
+    const depth = this.context.createGain(); depth.gain.value = airy ? 7 : 5;
     vibrato.connect(depth); depth.connect(oscillator.detune);
     const envelope = this.context.createGain();
     envelope.gain.setValueAtTime(0, at);
-    envelope.gain.linearRampToValueAtTime(.115, at + .13);
-    envelope.gain.linearRampToValueAtTime(.084, at + Math.min(.4, duration * .55));
-    envelope.gain.setValueAtTime(.084, at + Math.max(.42, duration - .28));
+    envelope.gain.linearRampToValueAtTime(strength, at + (airy ? .21 : .13));
+    envelope.gain.linearRampToValueAtTime(strength * .73, at + Math.min(.4, duration * .55));
+    envelope.gain.setValueAtTime(strength * .73, at + Math.max(.42, duration - .28));
     envelope.gain.exponentialRampToValueAtTime(.0001, at + duration + .28);
     oscillator.connect(envelope);
     const panner = this.pan(envelope, pan);
-    const voice = this.register([oscillator, vibrato], [envelope, panner, depth]);
-    oscillator.start(at); vibrato.start(at);
-    oscillator.stop(at + duration + .3); vibrato.stop(at + duration + .3);
+    const sources: AudioScheduledSourceNode[] = [oscillator, vibrato];
+    const nodes: AudioNode[] = [envelope, panner, depth];
+    if (airy) {
+      const breath = this.context.createBufferSource(); breath.buffer = this.noise(); breath.loop = true;
+      const filter = this.context.createBiquadFilter(); filter.type = 'bandpass'; filter.frequency.value = 2100; filter.Q.value = .8;
+      const mix = this.context.createGain(); mix.gain.value = .055;
+      breath.connect(filter); filter.connect(mix); mix.connect(envelope);
+      sources.push(breath); nodes.push(filter, mix);
+    }
+    const voice = this.register(sources, nodes);
+    for (const source of sources) { source.start(at); source.stop(at + duration + .3); }
     oscillator.onended = () => this.finish(voice);
   }
 
-  pad(note: number, at: number): void {
+  lead(flower: FlowerType, note: number, at: number, duration: number, pan: number): void {
+    const profile = FLOWER_VOICES[flower];
+    const pitch = note + profile.register;
+    switch (profile.instrument) {
+      case 'warm-string':
+        this.pluck(pitch, at, .3, pan, { attack:.028, decay:3.4, tone:1800 });
+        this.pluck(pitch + 12, at + .045, .09, pan * .6, { attack:.045, decay:2.8, tone:2000 });
+        break;
+      case 'xiao': this.flute(pitch, at, duration, pan, .12); break;
+      case 'harmonic': this.harmonic(pitch, at, pan); break;
+      case 'soft-zither': this.pluck(pitch, at, .34, pan, { attack:.065, decay:3.15, tone:1100 }); break;
+      case 'airy-flute': this.flute(pitch, at, duration * 1.1, pan, .085, true); break;
+    }
+  }
+
+  private harmonic(note: number, at: number, pan: number): void {
+    const envelope = this.context.createGain();
+    envelope.gain.setValueAtTime(0, at); envelope.gain.linearRampToValueAtTime(.14, at + .005);
+    envelope.gain.exponentialRampToValueAtTime(.0001, at + 1.8);
+    const weights: GainNode[] = [];
+    const sources = [1,2,3].map((multiple, index) => {
+      const oscillator = this.context.createOscillator(); oscillator.type = 'sine'; oscillator.frequency.value = midiHz(note) * multiple;
+      const weight = this.context.createGain(); weight.gain.value = [1,.28,.1][index]!;
+      oscillator.connect(weight); weight.connect(envelope); weights.push(weight); return oscillator;
+    });
+    const panner = this.pan(envelope, pan); const voice = this.register(sources, [envelope,panner,...weights]);
+    for (const source of sources) { source.start(at); source.stop(at + 1.85); }
+    sources[0]!.onended = () => this.finish(voice);
+  }
+
+  private noise(): AudioBuffer {
+    if (this.breathBuffer) return this.breathBuffer;
+    const buffer = this.context.createBuffer(1, this.context.sampleRate, this.context.sampleRate);
+    const data = buffer.getChannelData(0); let seed = 86471;
+    for (let i=0;i<data.length;i++) { seed=(Math.imul(seed,1664525)+1013904223)>>>0; data[i]=seed/4294967296*2-1; }
+    this.breathBuffer=buffer; return buffer;
+  }
+
+  pad(note: number, at: number, beat = BEAT): void {
     const envelope = this.context.createGain();
     envelope.gain.setValueAtTime(0, at);
     envelope.gain.linearRampToValueAtTime(.037, at + .75);
-    envelope.gain.linearRampToValueAtTime(.023, at + BEAT * 3);
-    envelope.gain.exponentialRampToValueAtTime(.0001, at + BEAT * 7.8);
+    envelope.gain.linearRampToValueAtTime(.023, at + beat * 3);
+    envelope.gain.exponentialRampToValueAtTime(.0001, at + beat * 7.8);
     const sources = [note, note + 12].map((midi, index) => {
       const oscillator = this.context.createOscillator(); oscillator.type = 'sine';
       oscillator.frequency.value = midiHz(midi); oscillator.detune.value = index ? 3 : -3;
-      oscillator.connect(envelope); oscillator.start(at); oscillator.stop(at + BEAT * 8);
+      oscillator.connect(envelope); oscillator.start(at); oscillator.stop(at + beat * 8);
       return oscillator;
     });
     const panner = this.pan(envelope, .07);
@@ -179,7 +275,7 @@ class InstrumentRack {
       this.finish(voice);
     }
     for (const node of this.effects) node.disconnect();
-    this.strings.clear();
+    this.strings.clear(); this.breathBuffer = null;
   }
 
   private pan(source: AudioNode, value: number): AudioNode {
@@ -232,8 +328,8 @@ class InstrumentRack {
     this.strings.set(note, buffer); return buffer;
   }
 
-  private impulse(): AudioBuffer {
-    const buffer = this.context.createBuffer(2, Math.round(this.context.sampleRate * 1.8), this.context.sampleRate);
+  private impulse(seconds: number): AudioBuffer {
+    const buffer = this.context.createBuffer(2, Math.round(this.context.sampleRate * seconds), this.context.sampleRate);
     let seed = 74117;
     for (let channel = 0; channel < 2; channel++) {
       const data = buffer.getChannelData(channel);
@@ -247,11 +343,37 @@ class InstrumentRack {
   }
 }
 
-/** A player is explicitly started by a click; camera recognition never enables
- * audio. Scheduling ahead keeps the music continuous during a slower frame. */
+function normalizedFlowers(flowers: FlowerType[]): FlowerType[] {
+  return (Array.isArray(flowers) ? flowers : []).filter(flower => Object.prototype.hasOwnProperty.call(FLOWER_VOICES, flower)).slice(0, 2);
+}
+
+/** The sustained bed is scored by scene; selected flowers alternate their own
+ * melodic instruments. Gesture ornaments remain a separate pentatonic layer. */
+function scheduleScore(rack: InstrumentRack, scene: MusicScene, flowers: FlowerType[], step: number, at: number, cursor: number): number {
+  const theme = MUSIC_THEMES[scene], beat = 60 / theme.bpm;
+  const score = scoreStep(step, scene);
+  if (score.bass !== null) rack.pluck(score.bass, at, scene === 'moonlake' ? .19 : .25, -.08, { attack:.025, tone:1500 });
+  if (score.pluck !== null) rack.pluck(score.pluck, at, theme.pluckStrength, step % 4 ? .13 : -.13,
+    { attack: scene === 'mountains' ? .03 : .008, tone:theme.pluckTone, decay:scene === 'bamboo' ? 2.25 : 3.5 });
+  if (score.flute !== null) {
+    const index = cursor % flowers.length;
+    rack.lead(flowers[index]!, score.flute, at, score.fluteBeats * beat, flowers.length > 1 ? (index === 0 ? -.22 : .22) : 0);
+    cursor++;
+  }
+  if (step % 16 === 0 && score.bass !== null) rack.pad(score.bass + 12, at, beat);
+  return cursor;
+}
+
+/** A player is explicitly started by a click. Scene/flower changes while paused
+ * only save configuration; changing a live configuration crossfades two racks. */
 export class GardenMusic {
   private context: AudioContext | null = null;
+  private userGain: GainNode | null = null;
   private rack: InstrumentRack | null = null;
+  private retiring = new Map<InstrumentRack, ReturnType<typeof setTimeout>>();
+  private scene: MusicScene = 'waterside';
+  private flowers: FlowerType[] = ['peony', 'lotus'];
+  private leadCursor = 0;
   private volumeValue = .3;
   private enabled = false;
   private disposed = false;
@@ -267,6 +389,20 @@ export class GardenMusic {
 
   constructor(private onStatus?: (status: MusicStatus) => void) { this.emit(); }
 
+  setScene(scene: MusicScene): void {
+    if (this.disposed || !MUSIC_THEMES[scene] || scene === this.scene) return;
+    this.scene = scene; this.transition(0); this.emit();
+  }
+
+  setFlowers(flowers: FlowerType[]): void {
+    if (this.disposed) return;
+    const next = normalizedFlowers(flowers);
+    if (!next.length || next.length === this.flowers.length && next.every((flower, index) => flower === this.flowers[index])) return;
+    const changed = next.findIndex((flower, index) => flower !== this.flowers[index]);
+    this.flowers = next;
+    this.transition(Math.max(0, changed)); this.emit();
+  }
+
   async start(): Promise<void> {
     if (this.disposed) throw new Error('音乐播放器已关闭，请刷新页面后重试。');
     if (this.enabled && this.context?.state === 'running') return;
@@ -279,9 +415,7 @@ export class GardenMusic {
 
   pause(): void {
     ++this.generation; this.pending = null; this.enabled = false;
-    if (this.timer !== null) clearInterval(this.timer);
-    this.timer = null;
-    this.rack?.stop();
+    this.clearScheduler(); this.clearRetiring(); this.rack?.stop();
     this.gesture = gestureMusicFrame([]); this.lastCapturedAt = -Infinity;
     this.lastGestureAudioTime = -Infinity;
     this.emit();
@@ -289,9 +423,7 @@ export class GardenMusic {
 
   setVolume(value: number): void {
     if (!Number.isFinite(value)) return;
-    this.volumeValue = clamp(value);
-    if (this.enabled) this.rack?.volume(this.volumeValue);
-    this.emit();
+    this.volumeValue = clamp(value); this.applyUserVolume(); this.emit();
   }
   getVolume(): number { return this.volumeValue; }
 
@@ -304,93 +436,146 @@ export class GardenMusic {
   }
 
   flowerSelected(): void {
-    if (!this.enabled || !this.context || !this.rack) return;
+    if (!this.enabled || !this.context || !this.rack || this.context.state !== 'running') return;
     const now = this.context.currentTime;
     if (now - this.lastSelectionAt < .3) return;
     this.lastSelectionAt = now;
-    // One soft octave interval; simultaneous two-hand selections share a cue.
-    this.rack.pluck(pentatonicMidi(5), now + .015, .17, -.08);
-    this.rack.pluck(pentatonicMidi(7), now + .1, .09, .08);
+    // The main voice already changed through setFlowers. This cue is only an
+    // acknowledgement, not the musical response to the selected flower.
+    this.rack.pluck(pentatonicMidi(5), now + .015, .13, -.08);
+    this.rack.pluck(pentatonicMidi(7), now + .1, .07, .08);
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.pause(); this.disposed = true;
     this.rack?.dispose(); this.rack = null;
+    this.userGain?.disconnect(); this.userGain = null;
     const context = this.context; this.context = null;
+    if (context) context.onstatechange = null;
     if (context && context.state !== 'closed') void context.close().catch(() => {});
   }
 
   private async begin(generation: number): Promise<void> {
+    // A browser interruption can leave an old scheduler alive. Reuse the audio
+    // context, but always start this playback with one fresh scheduler/rack.
+    this.clearScheduler(); this.enabled = false;
     try {
       if (!this.context || this.context.state === 'closed') {
+        this.rack?.dispose(); this.rack = null; this.clearRetiring();
         const Constructor = globalThis.AudioContext || (globalThis as typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (!Constructor) throw new Error('当前浏览器无法播放互动音乐，请使用更新的 Safari 或 Chrome。');
         this.context = new Constructor();
-        this.rack = new InstrumentRack(this.context, this.context.destination);
+        this.userGain = this.context.createGain(); this.userGain.gain.value = 0;
+        this.userGain.connect(this.context.destination);
         this.context.onstatechange = () => this.emit();
       }
       await this.context.resume();
       if (generation !== this.generation || this.disposed) return;
-      this.enabled = true; this.step = 0;
+      this.clearRetiring(); this.rack?.dispose();
+      this.rack = new InstrumentRack(this.context, this.userGain!, true, this.scene);
+      this.enabled = true; this.step = 0; this.leadCursor = 0;
       this.nextStepAt = this.context.currentTime + .08;
-      this.rack!.volume(this.volumeValue, .5);
-      this.rack!.colourFor(this.gesture.openness);
+      this.applyUserVolume(.15); this.rack.volume(1, .5);
+      this.rack.colourFor(this.gesture.openness);
       this.schedule();
       this.timer = setInterval(() => this.schedule(), 100);
       this.emit();
     } catch (error) {
       if (generation !== this.generation || this.disposed) return;
-      this.enabled = false; this.rack?.dispose(); this.rack = null;
+      this.enabled = false; this.clearScheduler(); this.clearRetiring(); this.rack?.dispose(); this.rack = null;
+      this.userGain?.disconnect(); this.userGain = null;
       const context = this.context; this.context = null;
+      if (context) context.onstatechange = null;
       if (context && context.state !== 'closed') void context.close().catch(() => {});
       this.emit(error instanceof Error ? error.message : '音乐暂时无法开启，请再点一次重试。');
       throw error;
     }
   }
 
+  private transition(firstVoice: number): void {
+    if (!this.enabled || !this.context || this.context.state !== 'running' || !this.userGain) return;
+    // At most two racks exist: the new score and one fading previous score.
+    // Rapid scene changes retire older transitions immediately, without timers
+    // or sampled-string caches accumulating behind the UI.
+    this.clearRetiring();
+    const old = this.rack;
+    if (old) {
+      old.stop(.75);
+      const timer = setTimeout(() => { old.dispose(); this.retiring.delete(old); }, 850);
+      this.retiring.set(old, timer);
+    }
+    this.rack = new InstrumentRack(this.context, this.userGain, true, this.scene);
+    this.rack.colourFor(this.gesture.openness); this.rack.volume(1, .75);
+    this.step = 0; this.leadCursor = firstVoice;
+    this.nextStepAt = this.context.currentTime + .04;
+    this.schedule();
+  }
+
+  private clearScheduler(): void {
+    if (this.timer !== null) clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  private clearRetiring(): void {
+    for (const [rack, timer] of this.retiring) { clearTimeout(timer); rack.dispose(); }
+    this.retiring.clear();
+  }
+
+  private applyUserVolume(fade = .08): void {
+    if (!this.context || !this.userGain) return;
+    const now = this.context.currentTime, gain = this.userGain.gain;
+    gain.cancelScheduledValues(now); gain.setValueAtTime(gain.value, now);
+    gain.linearRampToValueAtTime(this.volumeValue ** 1.25 * .82, now + fade);
+  }
+
   private schedule(): void {
     if (!this.enabled || !this.context || !this.rack || this.context.state !== 'running') return;
     const now = this.context.currentTime;
     if (this.nextStepAt < now - .22) this.nextStepAt = now + .04;
-    // 450ms covers usual 100–200ms recognition work without a catch-up burst.
+    const stepDuration = 60 / MUSIC_THEMES[this.scene].bpm / 2;
     let iterations = 0;
     while (this.nextStepAt < now + .45 && iterations++ < 8) {
       const at = this.nextStepAt;
-      const score = scoreStep(this.step);
-      if (score.bass !== null) this.rack.pluck(score.bass, at, .27, -.09);
-      if (score.pluck !== null) this.rack.pluck(score.pluck, at, this.step % 8 ? .19 : .23, this.step % 4 ? .14 : -.14);
-      if (score.flute !== null) this.rack.flute(score.flute, at, score.fluteBeats * BEAT);
-      if (this.step % 16 === 0 && score.bass !== null) this.rack.pad(score.bass + 12, at);
+      this.leadCursor = scheduleScore(this.rack, this.scene, this.flowers, this.step, at, this.leadCursor);
       const fresh = now - this.lastGestureAudioTime < .5;
       if (fresh && this.gesture.voices.length && (this.step % 2 === 0 || this.gesture.activity > .72)) {
         const voice = this.gesture.voices[this.step % this.gesture.voices.length]!;
         this.rack.pluck(voice.note, at + .035, .07 + voice.activity * .09, voice.pan);
       }
-      this.nextStepAt += STEP;
-      this.step = (this.step + 1) % 128;
+      this.nextStepAt += stepDuration; this.step = (this.step + 1) % 128;
     }
   }
 
   private emit(error?: string): void {
     const playing = this.enabled && this.context?.state === 'running';
+    const sceneName = MUSIC_THEMES[this.scene].name;
+    const flowerNames = this.flowers.map(flower => FLOWER_VOICES[flower].name);
+    const voiceNames = this.flowers.map(flower => FLOWER_VOICES[flower].label);
+    const description = `${sceneName} · ${voiceNames.join(' / ')}`;
     this.onStatus?.({ enabled: this.enabled, playing, volume: this.volumeValue,
-      message: error ?? (playing ? '国风器乐 · 随手入韵' : '本机合成 · 点按开启国风器乐') });
+      scene:this.scene, sceneName, flowerNames, voiceNames,
+      message: error ?? (playing ? description : `${description} · 点按开启`) });
   }
 }
 
-/** Render a short sample using the same score/instruments for audio QA. */
-export async function renderGardenMusicPreview(seconds = 16): Promise<AudioBuffer> {
+export interface MusicPreviewOptions { scene?: MusicScene; flowers?: FlowerType[]; volume?: number }
+/** Render the same sustained score/instruments, with configurable scene/voices,
+ * so musical changes can be checked independently of short selection cues. */
+export async function renderGardenMusicPreview(seconds = 16, options: MusicPreviewOptions = {}): Promise<AudioBuffer> {
   const duration = clamp(Number.isFinite(seconds) ? seconds : 16, 2, 60);
+  const scene = options.scene && MUSIC_THEMES[options.scene] ? options.scene : 'waterside';
+  const flowers = normalizedFlowers(options.flowers ?? ['peony','lotus']);
+  if (!flowers.length) flowers.push('peony','lotus');
+  const volume = Number.isFinite(options.volume) ? clamp(options.volume!) : .85;
   const context = new OfflineAudioContext(2, Math.ceil(duration * 32000), 32000);
-  const rack = new InstrumentRack(context, context.destination, false);
-  rack.volume(.85, .3);
-  for (let step = 0, at = .08; at < duration - .5; step++, at += STEP) {
-    const score = scoreStep(step);
-    if (score.bass !== null) rack.pluck(score.bass, at, .27, -.09);
-    if (score.pluck !== null) rack.pluck(score.pluck, at, .2, .1);
-    if (score.flute !== null) rack.flute(score.flute, at, score.fluteBeats * BEAT);
-    if (step % 16 === 0 && score.bass !== null) rack.pad(score.bass + 12, at);
+  const master = context.createGain(); master.gain.value = volume ** 1.25 * .82; master.connect(context.destination);
+  const rack = new InstrumentRack(context, master, false, scene);
+  rack.volume(1, .3);
+  const stepDuration = 60 / MUSIC_THEMES[scene].bpm / 2;
+  let cursor = 0;
+  for (let step = 0, at = .08; at < duration - .5; step++, at += stepDuration) {
+    cursor = scheduleScore(rack, scene, flowers, step, at, cursor);
   }
-  const result = await context.startRendering(); rack.dispose(); return result;
+  const result = await context.startRendering(); rack.dispose(); master.disconnect(); return result;
 }
