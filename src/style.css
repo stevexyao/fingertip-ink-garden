@@ -140,6 +140,21 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .immersive-music { position: absolute; z-index: 6; left: 16px; bottom: 125px; max-width: calc(100% - 32px); padding: 6px; background: #f7f3e9f2; border: 1px solid #c6cbb8; }
 .immersive-music input { width: 105px !important; }
 .demo-controls label:not(:first-child) { margin-top: 10px; }
+.voice-line { border-top: 1px solid #e4e2d5; margin-top: 12px; padding-top: 13px; display: flex; gap: 12px; justify-content: space-between; align-items: center; }
+.voice-line > div { min-width: 0; }
+.voice-line b { display: block; font: 11px 'Noto Serif SC', serif; color: #68735f; letter-spacing: 1px; }
+.voice-line small { display: block; margin-top: 5px; font-size: 10px; line-height: 1.7; color: #87917b; }
+.voice-line p { margin: 4px 0 0; color: #969b8b; font-size: 9px; line-height: 1.7; }
+.voice-line button { min-height: 44px; min-width: 76px; flex-shrink: 0; padding: 8px 11px; background: #f2efe4; border: 1px solid #cbcdbb; color: #6b775e; font-size: 11px; }
+[data-voice-toggle][aria-pressed="true"] { background: #e8eddf; border-color: #899b79; color: #51634c; }
+.voice-line button:disabled { opacity: .55; }
+.capture-receipt { position: absolute; top: 16px; left: 16px; z-index: 8; width: 264px; max-width: calc(100% - 32px); display: flex; align-items: center; gap: 9px; background: #f8f4eaf7; border: 1px solid #b6bfa6; padding: 8px; box-shadow: 0 3px 14px #263e2310; }
+.capture-receipt img { width: 47px; height: 47px; display: block; object-fit: cover; border: 1px solid #dedacb; }
+.capture-receipt b { display: block; font-size: 11px; font-weight: 500; margin-bottom: 4px; }
+.capture-receipt a { font-size: 10px; color: #657b58; text-decoration: underline; }
+.capture-receipt small { display: block; font-size: 8px; color: #949b88; margin-top: 4px; line-height: 1.6; }
+.capture-receipt button { margin-left: auto; min-width: 28px; min-height: 44px; border: 0; background: transparent; color: #808b73; }
+.painting.immersive .capture-receipt, .painting:fullscreen .capture-receipt { top: 72px; }
 @media (max-width: 680px) {
   .ambience { margin-top: 15px; padding-top: 13px; }
   .ambience-heading > span:last-child { font-size: 9px; letter-spacing: 0; }
@@ -150,7 +165,10 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
   .music-line > .music-controls { width: 100%; }
   .music-line .volume-control { flex: 1; }
   .music-controls { gap: 8px; }
-  .immersive-music { left: 10px; bottom: calc(117px + env(safe-area-inset-bottom)); }
+  .immersive-music { left: 10px; bottom: calc(117px + env(safe-area-inset-bottom)); max-width: calc(100% - 20px); gap: 5px; }
+  .immersive-music input { width: 80px !important; min-width: 50px; }
+  .immersive-music button { padding-left: 8px; padding-right: 8px; }
+  .capture-receipt { left: 10px; width: 225px; }
 }
 
 .dwell-toolbar { position: absolute; z-index: 4; left: 14px; right: 14px; bottom: 14px; max-width: 610px; margin: 0 auto; padding: 10px; border: 1px solid #b8bba6; background: #f8f4e9f5; box-shadow: 0 2px 14px #39412d0a; }

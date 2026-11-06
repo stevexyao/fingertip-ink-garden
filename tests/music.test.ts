@@ -13,7 +13,7 @@ test('the original score stays in a five-note mode across registers and loops', 
       assert.ok(note >= 38 && note <= 86);
     }
   }
-  assert.deepEqual(scoreStep(0), scoreStep(128));
+  assert.deepEqual(scoreStep(0), scoreStep(musicApi.MUSIC_THEMES.waterside.loopSteps));
   assert.ok(Array.from({ length: 128 }, (_, i) => scoreStep(i).flute).filter(n => n !== null).length >= 16);
 });
 
@@ -81,7 +81,8 @@ class Node {
   Q = new Parameter(); threshold = new Parameter(); knee = new Parameter(); ratio = new Parameter(); attack = new Parameter(); release = new Parameter();
   connect(_destination: unknown) { return _destination; }
   disconnect() { this.disconnected = true; }
-  setPeriodicWave() {}
+  wave: unknown = null;
+  setPeriodicWave(wave: unknown) { this.wave = wave; }
   startedAt = Infinity; stoppedAt = Infinity;
   start(at = 0) { this.startedAt = at; }
   stop(at = 0) { this.stoppedAt = at; }
@@ -171,7 +172,7 @@ test('landscapes have four distinct sustained scores and their intended tempos',
   const scores = scenes.map(scene => JSON.stringify(Array.from({ length: 128 }, (_, step) => scoreStep(step, scene))));
   assert.equal(new Set(scores).size, 4, 'each landscape needs its own melody and accompaniment, not only a cue');
   assert.ok(musicApi.MUSIC_THEMES, 'scene registry is available to the interface and renderer QA');
-  assert.deepEqual(scenes.map(scene => musicApi.MUSIC_THEMES[scene].bpm), [62, 68, 74, 60]);
+  assert.deepEqual(scenes.map(scene => musicApi.MUSIC_THEMES[scene].bpm), [56, 68, 74, 50]);
 });
 
 test('five flowers have five different sustained melodic voices', () => {
@@ -258,4 +259,58 @@ test('rapid configuration changes and interrupted resumes never accumulate sched
     assert.equal(active.size, 0);
     globalThis.setInterval = originalSet; globalThis.clearInterval = originalClear;
   }
+}));
+
+
+test('every landscape keeps a distinct scene-owned sustained lead behind the flower replies', () => {
+  const scenes = ['mountains', 'waterside', 'bamboo', 'moonlake'] as const;
+  assert.equal(new Set(scenes.map(scene => musicApi.MUSIC_THEMES[scene].lead.instrument)).size, 4);
+  for (const scene of scenes) {
+    const theme = musicApi.MUSIC_THEMES[scene];
+    let duration = 0, leadNotes = 0, replies = 0;
+    for (let step = 0; step < theme.loopSteps; step++) {
+      const score = scoreStep(step, scene);
+      if (score.sceneLead) {
+        assert.equal(score.sceneLead.instrument, theme.lead.instrument);
+        duration += score.sceneLead.durationSteps; leadNotes++;
+      }
+      if (score.reply) replies++;
+    }
+    assert.ok(leadNotes >= 12, `${scene} has a real continuing main melody`);
+    assert.ok(duration / theme.loopSteps >= .6, `${scene} main melody occupies at least 60% of its phrases`);
+    assert.ok(leadNotes >= replies, `${scene} flower responses cannot replace the scene-owned melody`);
+  }
+});
+
+test('the new arrangements use long breaths, sparse accompaniment and a compound river pulse', () => {
+  assert.equal(musicApi.MUSIC_THEMES.waterside.meter, '6/8');
+  assert.equal(musicApi.MUSIC_THEMES.waterside.subdivision, 3);
+  for (const scene of ['mountains', 'waterside', 'bamboo', 'moonlake'] as const) {
+    const theme = musicApi.MUSIC_THEMES[scene];
+    const events = Array.from({ length: theme.loopSteps }, (_, step) => scoreStep(step, scene));
+    const notes = events.flatMap(score => score.sceneLead ? [score.sceneLead] : []);
+    const meanSeconds = notes.reduce((sum, note) => sum + note.durationSteps * 60 / theme.bpm / theme.subdivision, 0) / notes.length;
+    assert.ok(meanSeconds >= .85, `${scene} lead notes have breath and sustain`);
+    assert.ok(events.filter(score => score.pluck !== null).length / theme.loopSteps <= .4,
+      `${scene} must not tick an arpeggio on every eighth note`);
+  }
+  assert.ok(musicApi.MUSIC_THEMES.moonlake.lead.register < musicApi.MUSIC_THEMES.bamboo.lead.register);
+});
+
+
+test('changing a flower preserves the scene lead already singing instead of repeating the opening', async () => audioTest(async () => {
+  const music = new GardenMusic();
+  try {
+    music.setScene('mountains'); music.setFlowers(['peony']); await music.start();
+    const context = Context.created[0]!;
+    const sceneLead = context.nodes.find(node => node.wave && node.startedAt < Infinity);
+    assert.ok(sceneLead, 'a scene-owned wind instrument sings even with peony selected');
+    const naturalEnd = sceneLead.stoppedAt;
+    context.currentTime = .4;
+    music.setFlowers(['plum', 'orchid']);
+    assert.equal(sceneLead.disconnected, false, 'flower transitions leave the scene track connected');
+    assert.equal(sceneLead.stoppedAt, naturalEnd, 'a flower change does not cut a sustained scene note');
+    music.setScene('moonlake');
+    assert.ok(sceneLead.stoppedAt <= context.currentTime + .9, 'a scene change still fades out the old scene');
+  } finally { music.dispose(); }
 }));

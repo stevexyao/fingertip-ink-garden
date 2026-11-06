@@ -8,6 +8,7 @@ import { HandCamera, type CameraStatus } from './camera';
 import { DwellFlowerSelector, type DwellTarget } from './dwell-selector';
 import { LANDSCAPES, type LandscapeType } from './landscape';
 import { GardenMusic } from './music';
+import { VoiceCapture } from './voice-capture';
 
 const icon = (name: string) => {
   const paths: Record<string, string> = {
@@ -48,7 +49,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <div class="dwell-options">${FLOWERS.map(flower => `<button class="dwell-flower" data-dwell-flower="${flower.type}" data-flower="${flower.type}" aria-pressed="false"><span class="dwell-petal" style="--petal-color:${flower.color}" aria-hidden="true">✿</span><span>${flower.name}</span></button>`).join('')}</div>
           </div>
           <div class="hand-pointers" id="hand-pointers" hidden aria-hidden="true">${[0, 1].map(i => `<div class="hand-pointer pointer-${i}" data-hand-pointer="${i}" hidden><svg viewBox="0 0 44 44"><circle class="pointer-track" cx="22" cy="22" r="18"/><circle class="pointer-progress" cx="22" cy="22" r="18" pathLength="100"/></svg><span>${i === 0 ? '一' : '二'}</span></div>`).join('')}</div>
-          <div class="immersive-music music-controls" id="immersive-music" hidden><button type="button" data-music-toggle aria-pressed="false">♫ 开启音乐</button><input data-music-volume type="range" min="0" max="100" value="30" aria-label="沉浸模式音乐音量"/><button type="button" class="mute-button" data-music-mute aria-label="静音音乐" aria-pressed="false">静音</button></div>
+          <div class="immersive-music music-controls" id="immersive-music" hidden><button type="button" data-music-toggle aria-pressed="false">♫ 开启音乐</button><input data-music-volume type="range" min="0" max="100" value="30" aria-label="沉浸模式音乐音量"/><button type="button" class="mute-button" data-music-mute aria-label="静音音乐" aria-pressed="false">静音</button><button type="button" data-voice-toggle data-compact="true" aria-label="开启声控截图" aria-pressed="false">声控</button></div>
+          <div class="capture-receipt" id="capture-receipt" hidden><a data-capture-download aria-label="下载刚截取的国画"><img id="capture-thumb" alt="刚截取的国画缩略图"/></a><div><b>已截取当前国画</b><a data-capture-download>下载 PNG</a><small>浏览器未自动保存时，可点此下载</small></div><button type="button" id="capture-close" aria-label="关闭截图预览">×</button></div>
           <button class="exit-immersive" id="exit-immersive" hidden>${icon('close')}退出沉浸</button>
         </div>
         <div class="canvas-tools">
@@ -59,6 +61,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <div class="ambience-heading"><span class="eyebrow">一 景 一 韵</span><span id="scene-description">水榭听雨，远山入画</span></div>
           <div class="landscape-options" role="group" aria-label="选择国画风景">${LANDSCAPES.map(scene => `<button type="button" data-landscape="${scene.type}" aria-pressed="false"><span class="landscape-mark scene-${scene.type}" aria-hidden="true"></span><span>${scene.name}</span></button>`).join('')}</div>
           <div class="music-line"><div><b id="music-theme">国风器乐 · 随手入韵</b><small id="music-status" role="status" aria-live="polite">轻触开启，听一曲花间清音</small></div><div class="music-controls"><button type="button" data-music-toggle aria-pressed="false">♫ 开启音乐</button><label class="volume-control"><span>音量 <output id="music-volume-value">30%</output></span><input data-music-volume type="range" min="0" max="100" value="30" aria-label="音乐音量"/></label><button type="button" class="mute-button" data-music-mute aria-label="静音音乐" aria-pressed="false">静音</button></div></div>
+          <div class="voice-line"><div><b>声控存画 · 说“截图”</b><small id="voice-status" role="status" aria-live="polite">默认关闭，点击开启后使用麦克风</small><p>语音识别由浏览器提供，可能使用在线服务。</p></div><button type="button" data-voice-toggle aria-pressed="false">开启声控</button></div>
         </section>
       </div>
 
@@ -118,6 +121,7 @@ let musicFlowers: [FlowerType, FlowerType] = [demoFlowers[0]!.flower, demoFlower
 let musicPlaying = false;
 let musicVolume = 0.3;
 let lastAudibleVolume = 0.3;
+let voiceEnabled = false;
 try {
   const storedVolume = localStorage.getItem('ink-garden-volume');
   if (storedVolume !== null && Number.isFinite(Number(storedVolume))) musicVolume = Math.max(0, Math.min(1, Number(storedVolume)));
@@ -169,6 +173,22 @@ function selectLandscape(type: LandscapeType) {
 document.querySelectorAll<HTMLButtonElement>('[data-landscape]').forEach(button => button.addEventListener('click', () => { selectLandscape(button.dataset.landscape as LandscapeType); }));
 selectLandscape(landscape);
 setMusicVolume(musicVolume);
+
+const voice = new VoiceCapture(() => { saveArtwork('voice'); }, status => {
+  voiceEnabled = status.enabled;
+  $('#voice-status').textContent = status.message;
+  document.querySelectorAll<HTMLButtonElement>('[data-voice-toggle]').forEach(button => {
+    button.disabled = !status.supported;
+    button.setAttribute('aria-pressed', String(status.enabled));
+    button.setAttribute('aria-label', status.enabled ? '停止声控截图' : '开启声控截图');
+    button.textContent = button.dataset.compact ? (status.enabled ? '停听' : '声控') : status.enabled ? '停止声控' : '开启声控';
+    button.title = status.message;
+  });
+});
+document.querySelectorAll<HTMLButtonElement>('[data-voice-toggle]').forEach(button => button.addEventListener('click', () => {
+  if (voiceEnabled) voice.stop();
+  else voice.start();
+}));
 
 function toast(message: string) {
   $('#toast').textContent = message;
@@ -503,15 +523,27 @@ document.addEventListener('fullscreenchange', () => {
 });
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && immersive) void leaveImmersive(); });
 
-$('#save-art').addEventListener('click', () => {
-  const link = document.createElement('a');
-  link.download = `指尖花开_${new Date().toISOString().slice(0, 10)}.png`;
-  link.href = renderer.exportPng();
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  toast('已保存这一刻的花开');
-});
+function saveArtwork(source: 'voice' | 'button') {
+  try {
+    const png = renderer.exportPng();
+    const stamp = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date()).replace(/[ :]/g, '-');
+    const filename = `指尖花开_${stamp}_${Math.round(performance.now())}.png`;
+    document.querySelectorAll<HTMLAnchorElement>('[data-capture-download]').forEach(anchor => { anchor.href = png; anchor.download = filename; });
+    $<HTMLImageElement>('#capture-thumb').src = png;
+    $('#capture-receipt').hidden = false;
+    const link = document.createElement('a');
+    link.download = filename;
+    link.href = png;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    toast(source === 'voice' ? '已听到“截图”，画面已截取，可点预览下载' : '画面已截取，可在预览中再次下载');
+  } catch {
+    toast('暂时未能截取画面，请点击“存画”重试');
+  }
+}
+$('#save-art').addEventListener('click', () => { saveArtwork('button'); });
+$('#capture-close').addEventListener('click', () => { $('#capture-receipt').hidden = true; });
 
 const connections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
 function drawPreview(now: number) {
@@ -561,7 +593,7 @@ for (const canvas of document.querySelectorAll<HTMLCanvasElement>('[data-thumb]'
   canvas.style.removeProperty('height');
 }
 
-window.addEventListener('pagehide', () => { camera.stop(); music.pause(); destroyed = true; cancelAnimationFrame(animationFrame); });
+window.addEventListener('pagehide', () => { camera.stop(); music.pause(); voice.stop(); destroyed = true; cancelAnimationFrame(animationFrame); });
 window.addEventListener('pageshow', event => {
   if (event.persisted) {
     destroyed = false; setMode('gallery'); tracker.clear(); handSlots.clear();
@@ -569,7 +601,7 @@ window.addEventListener('pageshow', event => {
   }
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { music.pause(); finishDragging(); }
+  if (document.hidden) { music.pause(); voice.stop(); finishDragging(); }
   if (document.hidden && (cameraPhase === 'running' || cameraPhase === 'loading')) {
     camera.stop(); setMode('gallery'); tracker.clear(); handSlots.clear();
     $('#camera-status').textContent = '离开页面后摄像头已关闭，回来时可重新开启。';

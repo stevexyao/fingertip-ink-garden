@@ -26,7 +26,12 @@ export interface GestureMusicFrame {
   activity: number; openness: number; pan: number;
   voices: { note: number; pan: number; activity: number }[];
 }
-export interface ScoreStep { bass: number | null; pluck: number | null; flute: number | null; fluteBeats: number }
+export interface SceneLeadNote { note: number; durationSteps: number; instrument: SceneLeadInstrument }
+export interface FlowerReplyNote { note: number; durationSteps: number }
+export interface ScoreStep {
+  bass: number | null; pluck: number | null; flute: number | null; fluteBeats: number;
+  sceneLead: SceneLeadNote | null; reply: FlowerReplyNote | null;
+}
 export const MUSIC_BPM = 68;
 const BEAT = 60 / MUSIC_BPM;
 const STEP = BEAT / 2;
@@ -41,65 +46,105 @@ export function pentatonicMidi(index: number): number {
   return 62 + octave * 12 + MODE[((value % MODE.length) + MODE.length) % MODE.length]!;
 }
 
-// Eight two-bar phrases: a composed call-and-answer, with space between breaths.
-// Values address the pentatonic scale; each row spans sixteen eighth-note steps.
-const MELODY: readonly (readonly (number | null)[])[] = [
-  [2, null, null, 3, 4, null, 3, null, 2, null, 1, null, 0, null, null, null],
-  [1, null, 2, null, 3, null, null, null, 4, null, 2, null, 1, null, null, null],
-  [4, null, null, 5, 6, null, 5, null, 4, null, 3, null, 2, null, null, null],
-  [3, null, 4, null, 2, null, 1, null, 0, null, null, null, null, null, null, null],
-  [5, null, 4, null, 3, null, null, 2, 4, null, 3, null, 1, null, null, null],
-  [2, null, null, 3, 5, null, 4, null, 3, null, 2, null, 1, null, null, null],
-  [4, null, null, 6, 5, null, 4, null, 3, null, null, 2, 1, null, null, null],
-  [2, null, 1, null, 0, null, -1, null, 0, null, null, null, null, null, null, null],
-];
-const ROOTS = [-10, -6, -8, -10, -10, -6, -8, -10] as const;
-
-export interface MusicTheme {
-  name: string; bpm: number; pluckEvery: number; bassEvery: number;
-  melody: readonly (readonly (number | null)[])[];
-  arpeggio: readonly number[]; reverb: number; wet: number; pluckTone: number; pluckStrength: number;
+export type SceneLeadInstrument = 'mountain-xiao' | 'river-xiao' | 'bamboo-dizi' | 'moon-xun';
+export interface SceneLeadProfile {
+  instrument: SceneLeadInstrument; label: string; register: number;
+  attack: number; release: number; vibrato: number; glide: number; strength: number;
 }
+export interface MusicTheme {
+  name: string; bpm: number; meter: '4/4' | '6/8'; subdivision: number;
+  phraseSteps: number; loopSteps: number;
+  lead: SceneLeadProfile; breath: number;
+  melody: readonly (readonly (number | null)[])[];
+  pluckPositions: readonly number[]; bassPositions: readonly number[]; replyPositions: readonly number[];
+  arpeggio: readonly number[]; reverb: number; wet: number; pluckTone: number; pluckStrength: number;
+  flowerRegister: number; flowerMix: number; ornamentRegister: number; ornamentEvery: number;
+}
+const phrase = (steps: number, entries: readonly (readonly [number, number])[]): readonly (number | null)[] => {
+  const notes: (number | null)[] = Array(steps).fill(null);
+  for (const [at,note] of entries) notes[at]=note;
+  return notes;
+};
 const MOUNTAIN_MELODY = [
-  [0,null,null,null,2,null,null,null,1,null,null,null,-1,null,null,null],
-  [2,null,null,null,3,null,null,null,1,null,null,null,0,null,null,null],
-  [3,null,null,null,2,null,null,null,0,null,null,null,-1,null,null,null],
-  [1,null,null,null,0,null,null,null,-1,null,null,null,0,null,null,null],
+  phrase(32, [[0,0],[8,2],[18,1],[26,-1]]),
+  phrase(32, [[0,2],[9,3],[18,1],[26,0]]),
+  phrase(32, [[0,3],[8,2],[16,0],[25,-3]]),
+  phrase(32, [[0,-1],[8,0],[19,1],[27,0]]),
+];
+const RIVER_MELODY = [
+  phrase(24, [[0,0],[4,2],[7,3],[12,2],[16,1],[20,0]]),
+  phrase(24, [[0,1],[4,3],[8,4],[12,3],[16,2],[20,1]]),
+  phrase(24, [[0,2],[4,4],[8,5],[12,4],[16,2],[20,3]]),
+  phrase(24, [[0,3],[4,2],[8,1],[12,0],[16,-1],[20,0]]),
 ];
 const BAMBOO_MELODY = [
-  [2,null,4,3,null,5,4,null,3,null,2,3,null,4,2,null],
-  [4,null,5,6,null,5,3,null,4,null,2,1,null,2,3,null],
-  [5,null,4,3,null,4,2,null,3,null,4,5,null,3,2,null],
-  [3,null,2,1,null,2,0,null,1,null,2,3,null,1,0,null],
+  phrase(32, [[0,3],[4,4],[8,5],[13,4],[16,2],[20,3],[24,4],[28,2]]),
+  phrase(32, [[0,4],[4,5],[8,6],[12,5],[16,4],[20,2],[24,3],[28,4]]),
+  phrase(32, [[0,5],[4,4],[8,3],[12,4],[16,2],[20,3],[24,1],[28,2]]),
+  phrase(32, [[0,3],[4,2],[8,1],[12,2],[16,0],[20,1],[24,2],[28,0]]),
 ];
 const MOON_MELODY = [
-  [4,null,null,null,null,null,2,null,3,null,null,null,null,null,1,null],
-  [3,null,null,null,null,null,1,null,2,null,null,null,0,null,null,null],
-  [2,null,null,null,null,null,4,null,3,null,null,null,null,null,1,null],
-  [1,null,null,null,null,null,0,null,-1,null,null,null,0,null,null,null],
+  phrase(32, [[0,0],[9,2],[18,1],[26,-1]]),
+  phrase(32, [[0,2],[10,1],[19,0],[27,-1]]),
+  phrase(32, [[0,1],[8,3],[18,2],[26,0]]),
+  phrase(32, [[0,1],[10,0],[20,-1],[27,0]]),
 ];
+const ROOTS = [-10,-6,-8,-10] as const;
 export const MUSIC_THEMES: Record<MusicScene, MusicTheme> = {
-  mountains: { name:'云山远岫', bpm:62, pluckEvery:4, bassEvery:16, melody:MOUNTAIN_MELODY, arpeggio:[0,3,5,3], reverb:2.6, wet:.24, pluckTone:1500, pluckStrength:.19 },
-  waterside: { name:'江南水乡', bpm:68, pluckEvery:2, bassEvery:8, melody:MELODY, arpeggio:[0,4,7,4,2,4,7,9], reverb:1.8, wet:.18, pluckTone:2900, pluckStrength:.19 },
-  bamboo: { name:'竹林听风', bpm:74, pluckEvery:1, bassEvery:8, melody:BAMBOO_MELODY, arpeggio:[0,2,4,7,4,2,3,5], reverb:1.2, wet:.12, pluckTone:3900, pluckStrength:.16 },
-  moonlake: { name:'荷塘月色', bpm:60, pluckEvery:4, bassEvery:16, melody:MOON_MELODY, arpeggio:[0,4,2,5], reverb:2.5, wet:.27, pluckTone:1800, pluckStrength:.14 },
+  mountains: {
+    name:'云山远岫', bpm:56, meter:'4/4', subdivision:2, phraseSteps:32, loopSteps:128,
+    lead:{instrument:'mountain-xiao',label:'远山长箫',register:0,attack:.38,release:.85,vibrato:3.4,glide:24,strength:.15},
+    breath:.87, melody:MOUNTAIN_MELODY, pluckPositions:[0,12,24], bassPositions:[0], replyPositions:[0,12,24],
+    arpeggio:[0,4,2], reverb:3.2, wet:.27, pluckTone:1400, pluckStrength:.145,
+    flowerRegister:0, flowerMix:.36, ornamentRegister:-12, ornamentEvery:4,
+  },
+  waterside: {
+    name:'江南水乡', bpm:68, meter:'6/8', subdivision:3, phraseSteps:24, loopSteps:96,
+    lead:{instrument:'river-xiao',label:'水乡筝箫',register:0,attack:.24,release:.56,vibrato:4.2,glide:35,strength:.135},
+    breath:.95, melody:RIVER_MELODY, pluckPositions:[0,3,6,9,12,15,18,21], bassPositions:[0,12], replyPositions:[0,8,16],
+    arpeggio:[0,3,5,2,4,1,6,3], reverb:2.1, wet:.2, pluckTone:2500, pluckStrength:.15,
+    flowerRegister:0, flowerMix:.4, ornamentRegister:0, ornamentEvery:3,
+  },
+  bamboo: {
+    name:'竹林听风', bpm:74, meter:'4/4', subdivision:2, phraseSteps:32, loopSteps:128,
+    lead:{instrument:'bamboo-dizi',label:'竹间清笛',register:0,attack:.17,release:.42,vibrato:4.6,glide:18,strength:.12},
+    breath:.85, melody:BAMBOO_MELODY, pluckPositions:[0,6,12,18,24,28], bassPositions:[0,16], replyPositions:[0,12,24],
+    arpeggio:[0,4,7,5,3,6], reverb:1.65, wet:.15, pluckTone:3200, pluckStrength:.12,
+    flowerRegister:0, flowerMix:.38, ornamentRegister:0, ornamentEvery:2,
+  },
+  moonlake: {
+    name:'荷塘月色', bpm:50, meter:'4/4', subdivision:2, phraseSteps:32, loopSteps:128,
+    lead:{instrument:'moon-xun',label:'月下低埙',register:-12,attack:.62,release:1.15,vibrato:2.2,glide:12,strength:.17},
+    breath:.93, melody:MOON_MELODY, pluckPositions:[0,18], bassPositions:[0], replyPositions:[0,12,24],
+    arpeggio:[0,4], reverb:3.6, wet:.29, pluckTone:1000, pluckStrength:.12,
+    flowerRegister:-12, flowerMix:.3, ornamentRegister:-12, ornamentEvery:4,
+  },
 };
 
 export function scoreStep(step: number, scene: MusicScene = 'waterside'): ScoreStep {
-  const current = ((Math.floor(Number.isFinite(step) ? step : 0) % 128) + 128) % 128;
-  const phrase = Math.floor(current / 16), position = current % 16;
   const theme = MUSIC_THEMES[scene] ?? MUSIC_THEMES.waterside;
-  const row = theme.melody[phrase % theme.melody.length]!;
+  const current = ((Math.floor(Number.isFinite(step) ? step : 0) % theme.loopSteps) + theme.loopSteps) % theme.loopSteps;
+  const phraseIndex = Math.floor(current / theme.phraseSteps), position = current % theme.phraseSteps;
+  const row = theme.melody[phraseIndex]!;
   const melody = row[position];
-  const root = ROOTS[phrase]!;
-  const arpeggio = theme.arpeggio[Math.floor(position / theme.pluckEvery) % theme.arpeggio.length]!;
-  let untilNext = 1;
-  while (position + untilNext < 16 && row[position + untilNext] === null) untilNext++;
+  const root = ROOTS[phraseIndex % ROOTS.length]!;
+  const pluckIndex = theme.pluckPositions.indexOf(position);
+  let gap=1;
+  while (position+gap<theme.phraseSteps && row[position+gap]===null) gap++;
+  const durationSteps = gap * theme.breath;
+  const sceneLead = melody === null ? null : { note:pentatonicMidi(melody!), durationSteps, instrument:theme.lead.instrument };
+  let previous=position;
+  while (previous>0 && row[previous]===null) previous--;
+  const reply = theme.replyPositions.includes(position) ? {
+    note:pentatonicMidi(row[previous] ?? 0) + theme.flowerRegister,
+    durationSteps: scene==='moonlake' ? 4.5 : 3.5,
+  } : null;
   return {
-    bass: position % theme.bassEvery === 0 ? pentatonicMidi(root) : null,
-    pluck: position % theme.pluckEvery === 0 ? pentatonicMidi(root + arpeggio + 5) : null,
-    flute: melody === null ? null : pentatonicMidi(melody!),
-    fluteBeats: Math.min(scene === 'moonlake' ? 3.4 : 2.8, Math.max(.65, untilNext * .46)),
+    bass:theme.bassPositions.includes(position) ? pentatonicMidi(root) : null,
+    pluck:pluckIndex>=0 ? pentatonicMidi(root+theme.arpeggio[pluckIndex % theme.arpeggio.length]!+5) : null,
+    flute:sceneLead?.note ?? null,
+    fluteBeats:durationSteps/theme.subdivision,
+    sceneLead, reply,
   };
 }
 
@@ -130,6 +175,8 @@ class InstrumentRack {
   private readonly strings = new Map<number, AudioBuffer>();
   private readonly voices = new Set<Voice>();
   private readonly fluteWave: PeriodicWave;
+  private readonly diziWave: PeriodicWave;
+  private readonly xunWave: PeriodicWave;
   private breathBuffer: AudioBuffer | null = null;
 
   constructor(private context: BaseAudioContext, destination: AudioNode, private limitVoices = true, scene: MusicScene = 'waterside') {
@@ -148,7 +195,9 @@ class InstrumentRack {
     const wet = context.createGain(); wet.gain.value = MUSIC_THEMES[scene].wet;
     this.bus.connect(reverb); reverb.connect(wet); wet.connect(this.colour);
     this.effects = [this.bus, this.colour, compressor, this.master, reverb, wet];
-    this.fluteWave = context.createPeriodicWave(new Float32Array(6), new Float32Array([0, 1, .14, .055, .025, .006]));
+    this.fluteWave = context.createPeriodicWave(new Float32Array(6), new Float32Array([0,1,.13,.045,.012,.003]));
+    this.diziWave = context.createPeriodicWave(new Float32Array(6), new Float32Array([0,1,.3,.12,.045,.012]));
+    this.xunWave = context.createPeriodicWave(new Float32Array(6), new Float32Array([0,1,.055,.17,.025,.025]));
   }
 
   volume(value: number, fade = .12): void {
@@ -174,58 +223,70 @@ class InstrumentRack {
     source.connect(filter); filter.connect(envelope);
     const panner = this.pan(envelope, pan);
     const voice = this.register([source], [filter, envelope, panner]);
-    source.start(at); source.stop(at + Math.min(3.6, (style.decay ?? 3.5) + .08));
+    source.start(at); source.stop(at + Math.min(5.2, (style.decay ?? 3.5) + .12));
     source.onended = () => this.finish(voice);
   }
 
-  flute(note: number, at: number, duration: number, pan = -.12, strength = .115, airy = false): void {
-    const oscillator = this.context.createOscillator();
-    if (airy) oscillator.type = 'sine'; else oscillator.setPeriodicWave(this.fluteWave);
-    oscillator.frequency.value = midiHz(note);
-    const vibrato = this.context.createOscillator(); vibrato.frequency.value = airy ? 5.3 : 4.7;
-    const depth = this.context.createGain(); depth.gain.value = airy ? 7 : 5;
+  flute(note: number, at: number, duration: number, pan = -.12, strength = .115, airy = false,
+    expression: { wave?:'xiao'|'dizi'|'xun'; attack?:number; release?:number; vibrato?:number; glide?:number; cutoff?:number } = {}): void {
+    const oscillator=this.context.createOscillator();
+    if (airy) oscillator.type='sine';
+    else oscillator.setPeriodicWave(expression.wave==='dizi' ? this.diziWave : expression.wave==='xun' ? this.xunWave : this.fluteWave);
+    const frequency=midiHz(note), glide=expression.glide ?? 18;
+    oscillator.frequency.value=frequency;
+    oscillator.frequency.setValueAtTime(frequency*2**(-glide/1200),at);
+    oscillator.frequency.exponentialRampToValueAtTime(frequency,at+.24);
+    const vibrato=this.context.createOscillator(); vibrato.frequency.value=expression.wave==='xun' ? 3.4 : expression.wave==='dizi' ? 5.1 : 4.35;
+    const depth=this.context.createGain(); depth.gain.value=0;
+    depth.gain.setValueAtTime(0,at); depth.gain.linearRampToValueAtTime(expression.vibrato ?? 4.2,at+Math.min(.9,duration*.45));
     vibrato.connect(depth); depth.connect(oscillator.detune);
-    const envelope = this.context.createGain();
-    envelope.gain.setValueAtTime(0, at);
-    envelope.gain.linearRampToValueAtTime(strength, at + (airy ? .21 : .13));
-    envelope.gain.linearRampToValueAtTime(strength * .73, at + Math.min(.4, duration * .55));
-    envelope.gain.setValueAtTime(strength * .73, at + Math.max(.42, duration - .28));
-    envelope.gain.exponentialRampToValueAtTime(.0001, at + duration + .28);
-    oscillator.connect(envelope);
-    const panner = this.pan(envelope, pan);
-    const sources: AudioScheduledSourceNode[] = [oscillator, vibrato];
-    const nodes: AudioNode[] = [envelope, panner, depth];
-    if (airy) {
-      const breath = this.context.createBufferSource(); breath.buffer = this.noise(); breath.loop = true;
-      const filter = this.context.createBiquadFilter(); filter.type = 'bandpass'; filter.frequency.value = 2100; filter.Q.value = .8;
-      const mix = this.context.createGain(); mix.gain.value = .055;
-      breath.connect(filter); filter.connect(mix); mix.connect(envelope);
-      sources.push(breath); nodes.push(filter, mix);
+    const envelope=this.context.createGain(), attack=Math.min(expression.attack ?? .24,duration*.35), release=expression.release ?? .6;
+    envelope.gain.setValueAtTime(0,at);
+    envelope.gain.linearRampToValueAtTime(strength,at+attack);
+    envelope.gain.linearRampToValueAtTime(strength*.74,at+Math.max(attack+.06,duration*.42));
+    envelope.gain.linearRampToValueAtTime(strength*.86,at+Math.max(attack+.12,duration*.72));
+    envelope.gain.exponentialRampToValueAtTime(.0001,at+duration+release);
+    const body=this.context.createBiquadFilter();body.type='lowpass';body.frequency.value=expression.cutoff ?? (airy ? 3900 : 3100);body.Q.value=.35;
+    oscillator.connect(body);body.connect(envelope);
+    const panner=this.pan(envelope,pan);
+    const sources:AudioScheduledSourceNode[]=[oscillator,vibrato], nodes:AudioNode[]=[envelope,panner,depth,body];
+    if (airy || expression.wave==='dizi') {
+      const breath=this.context.createBufferSource();breath.buffer=this.noise();breath.loop=true;
+      const filter=this.context.createBiquadFilter();filter.type='bandpass';filter.frequency.value=airy ? 2100 : 2700;filter.Q.value=.8;
+      const mix=this.context.createGain();mix.gain.value=airy ? .045 : .018;
+      breath.connect(filter);filter.connect(mix);mix.connect(envelope);sources.push(breath);nodes.push(filter,mix);
     }
-    const voice = this.register(sources, nodes);
-    for (const source of sources) { source.start(at); source.stop(at + duration + .3); }
-    oscillator.onended = () => this.finish(voice);
+    const voice=this.register(sources,nodes);
+    for(const source of sources){source.start(at);source.stop(at+duration+release+.03)}
+    oscillator.onended=()=>this.finish(voice);
   }
 
-  lead(flower: FlowerType, note: number, at: number, duration: number, pan: number): void {
+  sceneLead(scene:MusicScene,note:number,at:number,duration:number):void {
+    const lead=MUSIC_THEMES[scene].lead;
+    const wave=lead.instrument==='moon-xun' ? 'xun' : lead.instrument==='bamboo-dizi' ? 'dizi' : 'xiao';
+    this.flute(note+lead.register,at,duration,scene==='bamboo' ? .08 : -.08,lead.strength,false,
+      {wave,attack:lead.attack,release:lead.release,vibrato:lead.vibrato,glide:lead.glide,cutoff:scene==='moonlake' ? 1150 : scene==='mountains' ? 2350 : scene==='bamboo' ? 4900 : 3200});
+  }
+
+  lead(flower: FlowerType, note: number, at: number, duration: number, pan: number, mix = .4): void {
     const profile = FLOWER_VOICES[flower];
     const pitch = note + profile.register;
     switch (profile.instrument) {
       case 'warm-string':
-        this.pluck(pitch, at, .3, pan, { attack:.028, decay:3.4, tone:1800 });
-        this.pluck(pitch + 12, at + .045, .09, pan * .6, { attack:.045, decay:2.8, tone:2000 });
+        this.pluck(pitch, at, .3*mix, pan, { attack:.065, decay:4.6, tone:1700 });
+        this.pluck(pitch+12,at+.07,.09*mix,pan*.6,{attack:.08,decay:3.8,tone:1900});
         break;
-      case 'xiao': this.flute(pitch, at, duration, pan, .12); break;
-      case 'harmonic': this.harmonic(pitch, at, pan); break;
-      case 'soft-zither': this.pluck(pitch, at, .34, pan, { attack:.065, decay:3.15, tone:1100 }); break;
-      case 'airy-flute': this.flute(pitch, at, duration * 1.1, pan, .085, true); break;
+      case 'xiao': this.flute(pitch,at,duration,pan,.12*mix); break;
+      case 'harmonic': this.harmonic(pitch,at,pan,.12*mix); break;
+      case 'soft-zither': this.pluck(pitch,at,.34*mix,pan,{attack:.09,decay:4.3,tone:1050}); break;
+      case 'airy-flute': this.flute(pitch,at,duration*1.1,pan,.085*mix,true); break;
     }
   }
 
-  private harmonic(note: number, at: number, pan: number): void {
+  private harmonic(note: number, at: number, pan: number, strength: number): void {
     const envelope = this.context.createGain();
-    envelope.gain.setValueAtTime(0, at); envelope.gain.linearRampToValueAtTime(.14, at + .005);
-    envelope.gain.exponentialRampToValueAtTime(.0001, at + 1.8);
+    envelope.gain.setValueAtTime(0, at); envelope.gain.linearRampToValueAtTime(strength,at+.035);
+    envelope.gain.exponentialRampToValueAtTime(.0001, at + 2.8);
     const weights: GainNode[] = [];
     const sources = [1,2,3].map((multiple, index) => {
       const oscillator = this.context.createOscillator(); oscillator.type = 'sine'; oscillator.frequency.value = midiHz(note) * multiple;
@@ -233,7 +294,7 @@ class InstrumentRack {
       oscillator.connect(weight); weight.connect(envelope); weights.push(weight); return oscillator;
     });
     const panner = this.pan(envelope, pan); const voice = this.register(sources, [envelope,panner,...weights]);
-    for (const source of sources) { source.start(at); source.stop(at + 1.85); }
+    for (const source of sources) { source.start(at); source.stop(at + 2.85); }
     sources[0]!.onended = () => this.finish(voice);
   }
 
@@ -245,21 +306,17 @@ class InstrumentRack {
     this.breathBuffer=buffer; return buffer;
   }
 
-  pad(note: number, at: number, beat = BEAT): void {
-    const envelope = this.context.createGain();
-    envelope.gain.setValueAtTime(0, at);
-    envelope.gain.linearRampToValueAtTime(.037, at + .75);
-    envelope.gain.linearRampToValueAtTime(.023, at + beat * 3);
-    envelope.gain.exponentialRampToValueAtTime(.0001, at + beat * 7.8);
-    const sources = [note, note + 12].map((midi, index) => {
-      const oscillator = this.context.createOscillator(); oscillator.type = 'sine';
-      oscillator.frequency.value = midiHz(midi); oscillator.detune.value = index ? 3 : -3;
-      oscillator.connect(envelope); oscillator.start(at); oscillator.stop(at + beat * 8);
-      return oscillator;
+  pad(note:number,at:number,beat=BEAT,lengthBeats=8,strength=.027):void {
+    const duration=beat*lengthBeats, envelope=this.context.createGain();
+    envelope.gain.setValueAtTime(0,at);
+    envelope.gain.linearRampToValueAtTime(strength,at+Math.min(1.6,duration*.15));
+    envelope.gain.linearRampToValueAtTime(strength*.66,at+duration*.64);
+    envelope.gain.exponentialRampToValueAtTime(.0001,at+duration+.6);
+    const sources=[note,note+12].map((midi,index)=>{
+      const oscillator=this.context.createOscillator();oscillator.type='sine';oscillator.frequency.value=midiHz(midi);oscillator.detune.value=index ? 2 : -2;
+      oscillator.connect(envelope);oscillator.start(at);oscillator.stop(at+duration+.65);return oscillator;
     });
-    const panner = this.pan(envelope, .07);
-    const voice = this.register(sources, [envelope, panner]);
-    sources[0]!.onended = () => this.finish(voice);
+    const panner=this.pan(envelope,.035),voice=this.register(sources,[envelope,panner]);sources[0]!.onended=()=>this.finish(voice);
   }
 
   stop(fade = .12): void {
@@ -306,7 +363,7 @@ class InstrumentRack {
   private string(note: number): AudioBuffer {
     const cached = this.strings.get(note); if (cached) return cached;
     const sampleRate = this.context.sampleRate;
-    const length = Math.round(sampleRate * 3.6);
+    const length = Math.round(sampleRate * 5.2);
     const buffer = this.context.createBuffer(1, length, sampleRate);
     const data = buffer.getChannelData(0);
     const period = Math.max(4, Math.round(sampleRate / midiHz(note)));
@@ -320,11 +377,11 @@ class InstrumentRack {
     for (let i = 0; i < length; i++) {
       const index = i % period;
       const sample = ring[index]!;
-      ring[index] = (sample + ring[(index + 1) % period]!) * .4985;
+      ring[index] = (sample + ring[(index + 1) % period]!) * .49915;
       dc += (sample - dc) * .002;
       data[i] = (sample - dc) * Math.min(1, i / Math.max(1, sampleRate * .003));
     }
-    if (this.strings.size >= 28) this.strings.delete(this.strings.keys().next().value!);
+    if (this.strings.size >= 20) this.strings.delete(this.strings.keys().next().value!);
     this.strings.set(note, buffer); return buffer;
   }
 
@@ -347,33 +404,40 @@ function normalizedFlowers(flowers: FlowerType[]): FlowerType[] {
   return (Array.isArray(flowers) ? flowers : []).filter(flower => Object.prototype.hasOwnProperty.call(FLOWER_VOICES, flower)).slice(0, 2);
 }
 
-/** The sustained bed is scored by scene; selected flowers alternate their own
- * melodic instruments. Gesture ornaments remain a separate pentatonic layer. */
-function scheduleScore(rack: InstrumentRack, scene: MusicScene, flowers: FlowerType[], step: number, at: number, cursor: number): number {
-  const theme = MUSIC_THEMES[scene], beat = 60 / theme.bpm;
-  const score = scoreStep(step, scene);
-  if (score.bass !== null) rack.pluck(score.bass, at, scene === 'moonlake' ? .19 : .25, -.08, { attack:.025, tone:1500 });
-  if (score.pluck !== null) rack.pluck(score.pluck, at, theme.pluckStrength, step % 4 ? .13 : -.13,
-    { attack: scene === 'mountains' ? .03 : .008, tone:theme.pluckTone, decay:scene === 'bamboo' ? 2.25 : 3.5 });
-  if (score.flute !== null) {
-    const index = cursor % flowers.length;
-    rack.lead(flowers[index]!, score.flute, at, score.fluteBeats * beat, flowers.length > 1 ? (index === 0 ? -.22 : .22) : 0);
-    cursor++;
+/** Scene-owned voices are always the principal melody. Flowers respond on a
+ * separate rack, so changing a flower never restarts or replaces a long breath. */
+function scheduleSceneScore(rack:InstrumentRack,scene:MusicScene,step:number,at:number):ScoreStep {
+  const theme=MUSIC_THEMES[scene],beat=60/theme.bpm,score=scoreStep(step,scene);
+  const position=step%theme.phraseSteps;
+  if(score.bass!==null)rack.pluck(score.bass,at,scene==='moonlake' ? .15 : .18,-.08,{attack:.075,tone:1200,decay:4.8});
+  if(score.pluck!==null){
+    const accent=theme.meter==='6/8' && position%6!==0 ? .72 : 1;
+    rack.pluck(score.pluck,at,theme.pluckStrength*accent,position%6 ? .13 : -.13,
+      {attack:scene==='bamboo' ? .025 : .065,tone:theme.pluckTone,decay:scene==='bamboo' ? 3.5 : 4.8});
   }
-  if (step % 16 === 0 && score.bass !== null) rack.pad(score.bass + 12, at, beat);
-  return cursor;
+  if(score.sceneLead)rack.sceneLead(scene,score.sceneLead.note,at,score.sceneLead.durationSteps*beat/theme.subdivision);
+  if(position===0&&score.bass!==null)rack.pad(score.bass+12,at,beat,theme.phraseSteps/theme.subdivision*.93,scene==='moonlake' ? .034 : .022);
+  return score;
+}
+function scheduleFlowerReply(rack:InstrumentRack,scene:MusicScene,flowers:FlowerType[],reply:FlowerReplyNote,at:number,cursor:number):number {
+  const theme=MUSIC_THEMES[scene],index=cursor%flowers.length;
+  rack.lead(flowers[index]!,reply.note,at,reply.durationSteps*60/theme.bpm/theme.subdivision,
+    flowers.length>1 ? (index===0 ? -.24 : .24) : .16,theme.flowerMix);
+  return cursor+1;
 }
 
 /** A player is explicitly started by a click. Scene/flower changes while paused
- * only save configuration; changing a live configuration crossfades two racks. */
+ * only save configuration; each live track can crossfade its previous rack. */
 export class GardenMusic {
   private context: AudioContext | null = null;
   private userGain: GainNode | null = null;
   private rack: InstrumentRack | null = null;
-  private retiring = new Map<InstrumentRack, ReturnType<typeof setTimeout>>();
+  private flowerRack: InstrumentRack | null = null;
+  private retiring = new Map<InstrumentRack, {timer:ReturnType<typeof setTimeout>;kind:'scene'|'flower'}>();
   private scene: MusicScene = 'waterside';
   private flowers: FlowerType[] = ['peony', 'lotus'];
   private leadCursor = 0;
+  private lastLeadNote = 62;
   private volumeValue = .3;
   private enabled = false;
   private disposed = false;
@@ -391,7 +455,7 @@ export class GardenMusic {
 
   setScene(scene: MusicScene): void {
     if (this.disposed || !MUSIC_THEMES[scene] || scene === this.scene) return;
-    this.scene = scene; this.transition(0); this.emit();
+    this.scene = scene; this.transition(true,0); this.emit();
   }
 
   setFlowers(flowers: FlowerType[]): void {
@@ -400,7 +464,7 @@ export class GardenMusic {
     if (!next.length || next.length === this.flowers.length && next.every((flower, index) => flower === this.flowers[index])) return;
     const changed = next.findIndex((flower, index) => flower !== this.flowers[index]);
     this.flowers = next;
-    this.transition(Math.max(0, changed)); this.emit();
+    this.transition(false,Math.max(0, changed)); this.emit();
   }
 
   async start(): Promise<void> {
@@ -415,7 +479,7 @@ export class GardenMusic {
 
   pause(): void {
     ++this.generation; this.pending = null; this.enabled = false;
-    this.clearScheduler(); this.clearRetiring(); this.rack?.stop();
+    this.clearScheduler(); this.clearRetiring(); this.rack?.stop(); this.flowerRack?.stop();
     this.gesture = gestureMusicFrame([]); this.lastCapturedAt = -Infinity;
     this.lastGestureAudioTime = -Infinity;
     this.emit();
@@ -432,24 +496,23 @@ export class GardenMusic {
     this.lastCapturedAt = capturedAt;
     this.gesture = gestureMusicFrame(hands);
     this.lastGestureAudioTime = this.context?.currentTime ?? -Infinity;
-    if (this.enabled) this.rack?.colourFor(this.gesture.openness);
+    if (this.enabled) this.flowerRack?.colourFor(this.gesture.openness);
   }
 
-  flowerSelected(): void {
-    if (!this.enabled || !this.context || !this.rack || this.context.state !== 'running') return;
-    const now = this.context.currentTime;
-    if (now - this.lastSelectionAt < .3) return;
-    this.lastSelectionAt = now;
-    // The main voice already changed through setFlowers. This cue is only an
-    // acknowledgement, not the musical response to the selected flower.
-    this.rack.pluck(pentatonicMidi(5), now + .015, .13, -.08);
-    this.rack.pluck(pentatonicMidi(7), now + .1, .07, .08);
+  flowerSelected():void {
+    if(!this.enabled||!this.context||!this.flowerRack||this.context.state!=='running')return;
+    const now=this.context.currentTime;
+    if(now-this.lastSelectionAt<.3)return;
+    this.lastSelectionAt=now;
+    // Configuration already changes the continuing flower response. Keep this
+    // acknowledgement very soft, rather than an electronic two-note prompt.
+    this.flowerRack.pluck(62,now+.025,.045,0,{attack:.05,decay:2.6,tone:1400});
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.pause(); this.disposed = true;
-    this.rack?.dispose(); this.rack = null;
+    this.rack?.dispose(); this.rack = null; this.flowerRack?.dispose(); this.flowerRack = null;
     this.userGain?.disconnect(); this.userGain = null;
     const context = this.context; this.context = null;
     if (context) context.onstatechange = null;
@@ -462,7 +525,7 @@ export class GardenMusic {
     this.clearScheduler(); this.enabled = false;
     try {
       if (!this.context || this.context.state === 'closed') {
-        this.rack?.dispose(); this.rack = null; this.clearRetiring();
+        this.rack?.dispose(); this.rack = null; this.flowerRack?.dispose(); this.flowerRack = null; this.clearRetiring();
         const Constructor = globalThis.AudioContext || (globalThis as typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (!Constructor) throw new Error('当前浏览器无法播放互动音乐，请使用更新的 Safari 或 Chrome。');
         this.context = new Constructor();
@@ -472,18 +535,19 @@ export class GardenMusic {
       }
       await this.context.resume();
       if (generation !== this.generation || this.disposed) return;
-      this.clearRetiring(); this.rack?.dispose();
+      this.clearRetiring(); this.rack?.dispose(); this.flowerRack?.dispose();
       this.rack = new InstrumentRack(this.context, this.userGain!, true, this.scene);
+      this.flowerRack = new InstrumentRack(this.context, this.userGain!, true, this.scene);
       this.enabled = true; this.step = 0; this.leadCursor = 0;
       this.nextStepAt = this.context.currentTime + .08;
-      this.applyUserVolume(.15); this.rack.volume(1, .5);
-      this.rack.colourFor(this.gesture.openness);
+      this.applyUserVolume(.15); this.rack.volume(1,.6); this.flowerRack.volume(1,.6);
+      this.flowerRack.colourFor(this.gesture.openness);
       this.schedule();
       this.timer = setInterval(() => this.schedule(), 100);
       this.emit();
     } catch (error) {
       if (generation !== this.generation || this.disposed) return;
-      this.enabled = false; this.clearScheduler(); this.clearRetiring(); this.rack?.dispose(); this.rack = null;
+      this.enabled = false; this.clearScheduler(); this.clearRetiring(); this.rack?.dispose(); this.rack = null; this.flowerRack?.dispose(); this.flowerRack = null;
       this.userGain?.disconnect(); this.userGain = null;
       const context = this.context; this.context = null;
       if (context) context.onstatechange = null;
@@ -493,23 +557,32 @@ export class GardenMusic {
     }
   }
 
-  private transition(firstVoice: number): void {
-    if (!this.enabled || !this.context || this.context.state !== 'running' || !this.userGain) return;
-    // At most two racks exist: the new score and one fading previous score.
-    // Rapid scene changes retire older transitions immediately, without timers
-    // or sampled-string caches accumulating behind the UI.
-    this.clearRetiring();
-    const old = this.rack;
-    if (old) {
-      old.stop(.75);
-      const timer = setTimeout(() => { old.dispose(); this.retiring.delete(old); }, 850);
-      this.retiring.set(old, timer);
+  private transition(changeScene:boolean,firstVoice:number):void {
+    if(!this.enabled||!this.context||this.context.state!=='running'||!this.userGain)return;
+    this.retire(this.flowerRack,'flower',.78);
+    this.flowerRack=new InstrumentRack(this.context,this.userGain,true,this.scene);
+    this.flowerRack.colourFor(this.gesture.openness);this.flowerRack.volume(1,.78);
+    this.leadCursor=firstVoice;
+    if(changeScene){
+      this.retire(this.rack,'scene',.85);
+      this.rack=new InstrumentRack(this.context,this.userGain,true,this.scene);this.rack.volume(1,.85);
+      this.step=0;this.nextStepAt=this.context.currentTime+.045;this.schedule();
+    }else{
+      // Preserve the scene playhead and its already-singing long notes. Only
+      // the newly selected flower enters; the scene does not repeat its opening.
+      const theme=MUSIC_THEMES[this.scene];
+      this.leadCursor=scheduleFlowerReply(this.flowerRack,this.scene,this.flowers,
+        {note:this.lastLeadNote+theme.flowerRegister,durationSteps:theme.subdivision*1.8},
+        this.context.currentTime+.045,this.leadCursor);
     }
-    this.rack = new InstrumentRack(this.context, this.userGain, true, this.scene);
-    this.rack.colourFor(this.gesture.openness); this.rack.volume(1, .75);
-    this.step = 0; this.leadCursor = firstVoice;
-    this.nextStepAt = this.context.currentTime + .04;
-    this.schedule();
+  }
+
+  private retire(rack:InstrumentRack|null,kind:'scene'|'flower',fade:number):void {
+    this.clearRetiring(kind);
+    if(!rack)return;
+    rack.stop(fade);
+    const timer=setTimeout(()=>{rack.dispose();this.retiring.delete(rack)},Math.ceil((fade+.12)*1000));
+    this.retiring.set(rack,{timer,kind});
   }
 
   private clearScheduler(): void {
@@ -517,9 +590,11 @@ export class GardenMusic {
     this.timer = null;
   }
 
-  private clearRetiring(): void {
-    for (const [rack, timer] of this.retiring) { clearTimeout(timer); rack.dispose(); }
-    this.retiring.clear();
+  private clearRetiring(kind?:'scene'|'flower'):void {
+    for(const [rack,retired] of this.retiring){
+      if(kind&&retired.kind!==kind)continue;
+      clearTimeout(retired.timer);rack.dispose();this.retiring.delete(rack);
+    }
   }
 
   private applyUserVolume(fade = .08): void {
@@ -529,21 +604,23 @@ export class GardenMusic {
     gain.linearRampToValueAtTime(this.volumeValue ** 1.25 * .82, now + fade);
   }
 
-  private schedule(): void {
-    if (!this.enabled || !this.context || !this.rack || this.context.state !== 'running') return;
-    const now = this.context.currentTime;
-    if (this.nextStepAt < now - .22) this.nextStepAt = now + .04;
-    const stepDuration = 60 / MUSIC_THEMES[this.scene].bpm / 2;
-    let iterations = 0;
-    while (this.nextStepAt < now + .45 && iterations++ < 8) {
-      const at = this.nextStepAt;
-      this.leadCursor = scheduleScore(this.rack, this.scene, this.flowers, this.step, at, this.leadCursor);
-      const fresh = now - this.lastGestureAudioTime < .5;
-      if (fresh && this.gesture.voices.length && (this.step % 2 === 0 || this.gesture.activity > .72)) {
-        const voice = this.gesture.voices[this.step % this.gesture.voices.length]!;
-        this.rack.pluck(voice.note, at + .035, .07 + voice.activity * .09, voice.pan);
+  private schedule():void {
+    if(!this.enabled||!this.context||!this.rack||!this.flowerRack||this.context.state!=='running')return;
+    const now=this.context.currentTime,theme=MUSIC_THEMES[this.scene];
+    if(this.nextStepAt<now-.22)this.nextStepAt=now+.04;
+    const stepDuration=60/theme.bpm/theme.subdivision;
+    let iterations=0;
+    while(this.nextStepAt<now+.45&&iterations++<8){
+      const at=this.nextStepAt,score=scheduleSceneScore(this.rack,this.scene,this.step,at);
+      if(score.sceneLead)this.lastLeadNote=score.sceneLead.note;
+      if(score.reply)this.leadCursor=scheduleFlowerReply(this.flowerRack,this.scene,this.flowers,score.reply,at,this.leadCursor);
+      const fresh=now-this.lastGestureAudioTime<.5;
+      if(fresh&&this.gesture.voices.length&&this.step%theme.ornamentEvery===0){
+        const voice=this.gesture.voices[this.step%this.gesture.voices.length]!;
+        this.flowerRack.pluck(voice.note+theme.ornamentRegister,at+.045,.045+voice.activity*.055,voice.pan,
+          {attack:.04,decay:3.2,tone:this.scene==='moonlake'?1400:2600});
       }
-      this.nextStepAt += stepDuration; this.step = (this.step + 1) % 128;
+      this.nextStepAt+=stepDuration;this.step=(this.step+1)%theme.loopSteps;
     }
   }
 
@@ -552,7 +629,7 @@ export class GardenMusic {
     const sceneName = MUSIC_THEMES[this.scene].name;
     const flowerNames = this.flowers.map(flower => FLOWER_VOICES[flower].name);
     const voiceNames = this.flowers.map(flower => FLOWER_VOICES[flower].label);
-    const description = `${sceneName} · ${voiceNames.join(' / ')}`;
+    const description = `${sceneName} · ${MUSIC_THEMES[this.scene].lead.label} · ${voiceNames.join(' / ')}`;
     this.onStatus?.({ enabled: this.enabled, playing, volume: this.volumeValue,
       scene:this.scene, sceneName, flowerNames, voiceNames,
       message: error ?? (playing ? description : `${description} · 点按开启`) });
@@ -570,12 +647,13 @@ export async function renderGardenMusicPreview(seconds = 16, options: MusicPrevi
   const volume = Number.isFinite(options.volume) ? clamp(options.volume!) : .85;
   const context = new OfflineAudioContext(2, Math.ceil(duration * 32000), 32000);
   const master = context.createGain(); master.gain.value = volume ** 1.25 * .82; master.connect(context.destination);
-  const rack = new InstrumentRack(context, master, false, scene);
-  rack.volume(1, .3);
-  const stepDuration = 60 / MUSIC_THEMES[scene].bpm / 2;
-  let cursor = 0;
-  for (let step = 0, at = .08; at < duration - .5; step++, at += stepDuration) {
-    cursor = scheduleScore(rack, scene, flowers, step, at, cursor);
+  const rack=new InstrumentRack(context,master,false,scene),flowerRack=new InstrumentRack(context,master,false,scene);
+  rack.volume(1,.45);flowerRack.volume(1,.45);
+  const theme=MUSIC_THEMES[scene],stepDuration=60/theme.bpm/theme.subdivision;
+  let cursor=0;
+  for(let step=0,at=.08;at<duration-.5;step++,at+=stepDuration){
+    const score=scheduleSceneScore(rack,scene,step,at);
+    if(score.reply)cursor=scheduleFlowerReply(flowerRack,scene,flowers,score.reply,at,cursor);
   }
-  const result = await context.startRendering(); rack.dispose(); master.disconnect(); return result;
+  const result=await context.startRendering();rack.dispose();flowerRack.dispose();master.disconnect();return result;
 }
