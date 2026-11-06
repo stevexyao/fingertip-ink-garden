@@ -7,7 +7,8 @@ import { synchronizeFlowerSelection } from './flower-selection';
 import { HandCamera, type CameraStatus } from './camera';
 import { DwellFlowerSelector, type DwellTarget } from './dwell-selector';
 import { LANDSCAPES, type LandscapeType } from './landscape';
-import { GardenMusic } from './music';
+import { GardenMusic, type MusicStatus } from './music';
+import { APPLE_MUSIC_TRACKS, AppleMusicPlayer, type AppleMusicStatus } from './apple-music';
 import { VoiceCapture } from './voice-capture';
 
 const icon = (name: string) => {
@@ -32,7 +33,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     </header>
 
     <section class="workspace" aria-label="指尖作画工作台">
-      <div class="painting-column">
+      <div class="painting-column" id="painting-column">
         <div class="painting-head"><span class="eyebrow">一 方 宣 纸 · 两 手 春 色</span><span class="live-state" id="live-state"><i></i>赏花预览</span></div>
         <div class="painting" id="painting">
           <canvas id="art-canvas" aria-label="国画花卉互动画布"></canvas>
@@ -50,9 +51,9 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           </div>
           <div class="hand-pointers" id="hand-pointers" hidden aria-hidden="true">${[0, 1].map(i => `<div class="hand-pointer pointer-${i}" data-hand-pointer="${i}" hidden><svg viewBox="0 0 44 44"><circle class="pointer-track" cx="22" cy="22" r="18"/><circle class="pointer-progress" cx="22" cy="22" r="18" pathLength="100"/></svg><span>${i === 0 ? '一' : '二'}</span></div>`).join('')}</div>
           <div class="immersive-music music-controls" id="immersive-music" hidden><button type="button" data-music-toggle aria-pressed="false">♫ 开启音乐</button><input data-music-volume type="range" min="0" max="100" value="30" aria-label="沉浸模式音乐音量"/><button type="button" class="mute-button" data-music-mute aria-label="静音音乐" aria-pressed="false">静音</button><button type="button" data-voice-toggle data-compact="true" aria-label="开启声控截图" aria-pressed="false">声控</button></div>
-          <div class="capture-receipt" id="capture-receipt" hidden><a data-capture-download aria-label="下载刚截取的国画"><img id="capture-thumb" alt="刚截取的国画缩略图"/></a><div><b>已截取当前国画</b><a data-capture-download>下载 PNG</a><small>浏览器未自动保存时，可点此下载</small></div><button type="button" id="capture-close" aria-label="关闭截图预览">×</button></div>
           <button class="exit-immersive" id="exit-immersive" hidden>${icon('close')}退出沉浸</button>
         </div>
+        <div class="capture-receipt" id="capture-receipt" hidden><a data-capture-download aria-label="下载刚截取的国画"><img id="capture-thumb" alt="刚截取的国画缩略图"/></a><div><b>已截取当前国画</b><a data-capture-download>下载 PNG</a><small>浏览器未自动保存时，可点此下载</small></div><button type="button" id="capture-close" aria-label="关闭截图预览">×</button></div>
         <div class="canvas-tools">
           <p id="canvas-help">移指随行，张合开花；指向底部花牌，停留 0.8 秒选花。</p>
           <div><button class="text-tool" id="fullscreen">${icon('expand')}<span>沉浸</span></button><button class="text-tool" id="save-art">${icon('download')}<span>存画</span></button></div>
@@ -60,7 +61,9 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <section class="ambience" aria-label="风景与音乐">
           <div class="ambience-heading"><span class="eyebrow">一 景 一 韵</span><span id="scene-description">水榭听雨，远山入画</span></div>
           <div class="landscape-options" role="group" aria-label="选择国画风景">${LANDSCAPES.map(scene => `<button type="button" data-landscape="${scene.type}" aria-pressed="false"><span class="landscape-mark scene-${scene.type}" aria-hidden="true"></span><span>${scene.name}</span></button>`).join('')}</div>
-          <div class="music-line"><div><b id="music-theme">国风器乐 · 随手入韵</b><small id="music-status" role="status" aria-live="polite">轻触开启，听一曲花间清音</small></div><div class="music-controls"><button type="button" data-music-toggle aria-pressed="false">♫ 开启音乐</button><label class="volume-control"><span>音量 <output id="music-volume-value">30%</output></span><input data-music-volume type="range" min="0" max="100" value="30" aria-label="音乐音量"/></label><button type="button" class="mute-button" data-music-mute aria-label="静音音乐" aria-pressed="false">静音</button></div></div>
+          <div class="music-source" role="group" aria-label="音乐来源"><button type="button" data-music-source="apple" aria-pressed="true">Apple Music</button><button type="button" data-music-source="interactive" aria-pressed="false">互动配乐 · 离线可用</button></div>
+          <div class="music-line"><div><b id="music-theme">Apple Music · 四景入韵</b><small id="music-status" role="status" aria-live="polite">点击载入官方播放器，再在播放器中播放</small></div><div class="music-controls"><button type="button" data-music-toggle aria-pressed="false">载入 Apple Music</button><label class="volume-control"><span>音量 <output id="music-volume-value">30%</output></span><input data-music-volume type="range" min="0" max="100" value="30" aria-label="音乐音量"/></label><button type="button" class="mute-button" data-music-mute aria-label="静音音乐" aria-pressed="false">静音</button></div></div>
+          <section class="apple-music-panel" id="apple-music-panel" aria-label="Apple Music 官方播放器" hidden><div class="apple-player-heading"><b>Apple Music</b><button type="button" data-apple-stop aria-label="停止并关闭 Apple Music 播放器">停止</button></div><div id="apple-music-frame"></div><p id="apple-player-status" role="status">请在播放器内点播放。未登录为短试听，订阅登录后可听完整曲目；音量在播放器或系统中调整。</p><a id="apple-music-link" target="_blank" rel="noopener noreferrer">在 Apple Music 打开本曲 ↗</a></section>
           <div class="voice-line"><div><b>声控存画 · 说“截图”</b><small id="voice-status" role="status" aria-live="polite">默认关闭，点击开启后使用麦克风</small><p>语音识别由浏览器提供，可能使用在线服务。</p></div><button type="button" data-voice-toggle aria-pressed="false">开启声控</button></div>
         </section>
       </div>
@@ -89,6 +92,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => document.querySelector<T>(selector)!;
 const painting = $('#painting');
+const paintingColumn = $('#painting-column');
 const art = $<HTMLCanvasElement>('#art-canvas');
 const video = $<HTMLVideoElement>('#webcam');
 const skeleton = $<HTMLCanvasElement>('#skeleton');
@@ -129,16 +133,50 @@ try {
   if (LANDSCAPES.some(scene => scene.type === storedScene)) landscape = storedScene as LandscapeType;
 } catch { /* Preference storage is optional in private browsing. */ }
 if (musicVolume > 0) lastAudibleVolume = musicVolume;
+let musicSource: 'apple' | 'interactive' = 'apple';
+let interactiveMusicStatus: MusicStatus | undefined;
+let appleMusicStatus: AppleMusicStatus | undefined;
+function updateMusicUi() {
+  const apple = musicSource === 'apple';
+  const enabled = Boolean(appleMusicStatus?.enabled);
+  const failed = appleMusicStatus?.phase === 'error';
+  const track = appleMusicStatus?.track ?? APPLE_MUSIC_TRACKS[landscape];
+  document.querySelectorAll<HTMLButtonElement>('[data-music-source]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.musicSource === musicSource));
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-music-toggle]').forEach(button => {
+    button.textContent = apple ? (failed ? '重试 Apple Music' : enabled ? '停止 Apple Music' : '载入 Apple Music') : musicPlaying ? 'Ⅱ 暂停音乐' : '♫ 开启音乐';
+    button.setAttribute('aria-pressed', String(apple ? enabled : musicPlaying));
+    button.title = apple ? (appleMusicStatus?.message ?? '载入 Apple 官方播放器，在其中点击播放') : interactiveMusicStatus?.message ?? '';
+  });
+  document.querySelectorAll<HTMLElement>('.volume-control, [data-music-volume], [data-music-mute]').forEach(element => { element.hidden = apple; });
+  $('#apple-music-panel').hidden = !apple || !enabled;
+  $('#apple-music-panel').dataset.phase = appleMusicStatus?.phase ?? 'idle';
+  $('#apple-player-status').textContent = failed ? appleMusicStatus!.message : '请在播放器内点播放。未登录为短试听，订阅登录后可听完整曲目；音量在播放器或系统中调整。';
+  const link = $<HTMLAnchorElement>('#apple-music-link');
+  link.href = track.url;
+  link.textContent = `在 Apple Music 收听《${track.title}》 ↗`;
+  $('#music-theme').textContent = apple ? `Apple Music · ${track.title} · ${track.artist}` : `${interactiveMusicStatus?.sceneName ?? '国风器乐'} · 互动配乐`;
+  $('#music-status').textContent = apple ? appleMusicStatus?.message ?? '点击载入官方播放器，再在播放器中播放；切景更换曲目。' : interactiveMusicStatus?.message ?? '';
+}
 const music = new GardenMusic(status => {
   musicPlaying = status.playing;
-  document.querySelectorAll<HTMLButtonElement>('[data-music-toggle]').forEach(button => {
-    button.textContent = status.playing ? 'Ⅱ 暂停音乐' : '♫ 开启音乐';
-    button.setAttribute('aria-pressed', String(status.playing));
-    button.title = status.message;
-  });
-  $('#music-theme').textContent = status.sceneName ? `${status.sceneName} · 国风器乐` : '国风器乐 · 随手入韵';
-  $('#music-status').textContent = status.message;
+  interactiveMusicStatus = status;
+  updateMusicUi();
 });
+const appleMusic = new AppleMusicPlayer($('#apple-music-frame'), status => {
+  appleMusicStatus = status;
+  updateMusicUi();
+});
+document.querySelectorAll<HTMLButtonElement>('[data-music-source]').forEach(button => button.addEventListener('click', () => {
+  const next = button.dataset.musicSource;
+  if ((next !== 'apple' && next !== 'interactive') || next === musicSource) return;
+  musicSource = next;
+  music.pause();
+  appleMusic.stop();
+  updateMusicUi();
+}));
+document.querySelectorAll<HTMLButtonElement>('[data-apple-stop]').forEach(button => button.addEventListener('click', () => { appleMusic.stop(); }));
 
 function setMusicVolume(volume: number) {
   musicVolume = Math.max(0, Math.min(1, volume));
@@ -155,8 +193,11 @@ function setMusicVolume(volume: number) {
 }
 
 document.querySelectorAll<HTMLButtonElement>('[data-music-toggle]').forEach(button => button.addEventListener('click', () => {
-  if (musicPlaying) music.pause();
-  else void music.start().catch(() => { $('#music-status').textContent = '音乐暂时未能开启，请再点一次重试。'; });
+  if (musicSource === 'apple') {
+    if (appleMusicStatus?.enabled && appleMusicStatus.phase !== 'error') appleMusic.stop();
+    else appleMusic.load();
+  } else if (musicPlaying) music.pause();
+  else void music.start().catch(() => { if (musicSource === 'interactive') $('#music-status').textContent = '音乐暂时未能开启，请再点一次重试。'; });
 }));
 document.querySelectorAll<HTMLInputElement>('[data-music-volume]').forEach(input => input.addEventListener('input', () => { setMusicVolume(Number(input.value) / 100); }));
 document.querySelectorAll<HTMLButtonElement>('[data-music-mute]').forEach(button => button.addEventListener('click', () => { setMusicVolume(musicVolume === 0 ? lastAudibleVolume : 0); }));
@@ -165,6 +206,7 @@ function selectLandscape(type: LandscapeType) {
   landscape = type;
   renderer.setLandscape(type);
   music.setScene(type);
+  appleMusic.setScene(type);
   const scene = LANDSCAPES.find(candidate => candidate.type === type)!;
   $('#scene-description').textContent = scene.note;
   document.querySelectorAll<HTMLButtonElement>('[data-landscape]').forEach(button => { button.setAttribute('aria-pressed', String(button.dataset.landscape === type)); });
@@ -505,6 +547,7 @@ async function leaveImmersive() {
   if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
   immersive = false;
   painting.classList.remove('immersive');
+  paintingColumn.classList.remove('is-immersive');
   $('#exit-immersive').hidden = true;
   $('#immersive-music').hidden = true;
   resize();
@@ -512,9 +555,10 @@ async function leaveImmersive() {
 $('#fullscreen').addEventListener('click', async () => {
   immersive = true;
   painting.classList.add('immersive');
+  paintingColumn.classList.add('is-immersive');
   $('#exit-immersive').hidden = false;
   $('#immersive-music').hidden = false;
-  if (painting.requestFullscreen) await painting.requestFullscreen().catch(() => {});
+  if (paintingColumn.requestFullscreen) await paintingColumn.requestFullscreen().catch(() => {});
   resize();
 });
 $('#exit-immersive').addEventListener('click', () => { void leaveImmersive(); });
@@ -593,7 +637,7 @@ for (const canvas of document.querySelectorAll<HTMLCanvasElement>('[data-thumb]'
   canvas.style.removeProperty('height');
 }
 
-window.addEventListener('pagehide', () => { camera.stop(); music.pause(); voice.stop(); destroyed = true; cancelAnimationFrame(animationFrame); });
+window.addEventListener('pagehide', () => { camera.stop(); music.pause(); appleMusic.stop(); voice.stop(); destroyed = true; cancelAnimationFrame(animationFrame); });
 window.addEventListener('pageshow', event => {
   if (event.persisted) {
     destroyed = false; setMode('gallery'); tracker.clear(); handSlots.clear();
@@ -601,7 +645,7 @@ window.addEventListener('pageshow', event => {
   }
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { music.pause(); voice.stop(); finishDragging(); }
+  if (document.hidden) { music.pause(); appleMusic.stop(); voice.stop(); finishDragging(); }
   if (document.hidden && (cameraPhase === 'running' || cameraPhase === 'loading')) {
     camera.stop(); setMode('gallery'); tracker.clear(); handSlots.clear();
     $('#camera-status').textContent = '离开页面后摄像头已关闭，回来时可重新开启。';
